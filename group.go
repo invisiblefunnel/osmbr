@@ -18,6 +18,7 @@ const (
 // Obtain one via PrimitiveBlock.Groups. GroupScanner is a value type.
 type GroupScanner struct {
 	msg       protoscan.Message
+	peek      protoscan.Message
 	groupData []byte // raw bytes of current PrimitiveGroup (zero-copy)
 	gType     GroupType
 }
@@ -33,11 +34,10 @@ func (gs *GroupScanner) Next() bool {
 			gs.groupData = d
 
 			// Peek at first field to identify group type
-			var peek protoscan.Message
-			peek.Reset(d)
+			gs.peek.Reset(d)
 			gs.gType = GroupTypeUnknown
-			if peek.Next() {
-				switch peek.FieldNumber() {
+			if gs.peek.Next() {
+				switch gs.peek.FieldNumber() {
 				case 1:
 					gs.gType = GroupTypeNodes
 				case 2:
@@ -49,7 +49,7 @@ func (gs *GroupScanner) Next() bool {
 				case 5:
 					gs.gType = GroupTypeChangesets
 				}
-				peek.Skip()
+				gs.peek.Skip()
 			}
 			return true
 		}
