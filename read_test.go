@@ -1,6 +1,7 @@
 package osmbr_test
 
 import (
+	"io"
 	"maps"
 	"math"
 	"os"
@@ -123,6 +124,49 @@ func TestReadAll(t *testing.T) {
 	}
 	if relations != 312 {
 		t.Errorf("relations = %d, want 312", relations)
+	}
+}
+
+func TestBlockOffsets(t *testing.T) {
+	f, err := os.Open(testFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	// First pass: record each block's offset and type.
+	type blockInfo struct {
+		offset int64
+		typ    string
+	}
+	var blocks []blockInfo
+
+	br := osmbr.NewBlockReader(f)
+	for br.Next() {
+		blocks = append(blocks, blockInfo{offset: br.Offset(), typ: br.Type()})
+	}
+	if err := br.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if len(blocks) == 0 {
+		t.Fatal("no blocks found")
+	}
+	if blocks[0].offset != 0 {
+		t.Errorf("first block offset = %d, want 0", blocks[0].offset)
+	}
+
+	// Second pass: seek to each recorded offset and verify we read the same block type.
+	for i, b := range blocks {
+		if _, err := f.Seek(b.offset, io.SeekStart); err != nil {
+			t.Fatalf("block %d: seek to %d: %v", i, b.offset, err)
+		}
+		br2 := osmbr.NewBlockReader(f)
+		if !br2.Next() {
+			t.Fatalf("block %d: Next returned false at offset %d", i, b.offset)
+		}
+		if br2.Type() != b.typ {
+			t.Errorf("block %d at offset %d: type = %q, want %q", i, b.offset, br2.Type(), b.typ)
+		}
 	}
 }
 

@@ -30,6 +30,8 @@ type BlockReader struct {
 	zlibR     io.ReadCloser // reused zlib reader; nil until first zlib block
 	blockType string
 	blockData []byte
+	offset    int64 // byte offset where current block starts
+	pos       int64 // running read position
 	err       error
 }
 
@@ -45,6 +47,8 @@ func NewBlockReader(r io.Reader) *BlockReader {
 // Next reads the next FileBlock. Returns false on EOF or error.
 // Call Err to distinguish between them.
 func (br *BlockReader) Next() bool {
+	br.offset = br.pos
+
 	_, err := io.ReadFull(br.r, br.lenBuf[:])
 	if err == io.EOF || err == io.ErrUnexpectedEOF {
 		return false
@@ -53,6 +57,7 @@ func (br *BlockReader) Next() bool {
 		br.err = err
 		return false
 	}
+	br.pos += 4
 
 	headerLen := binary.BigEndian.Uint32(br.lenBuf[:])
 	if headerLen > 65536 {
@@ -69,6 +74,7 @@ func (br *BlockReader) Next() bool {
 		br.err = err
 		return false
 	}
+	br.pos += int64(headerLen)
 
 	// Scan BlobHeader: field 1=type (string), field 3=datasize (int32)
 	var (
@@ -123,6 +129,7 @@ func (br *BlockReader) Next() bool {
 		br.err = err
 		return false
 	}
+	br.pos += dataSize
 
 	// Scan Blob: fields can arrive in any order, collect all then act
 	var (
@@ -226,6 +233,10 @@ func (br *BlockReader) decompress(data []byte, rawSize int) error {
 
 // Err returns the first non-EOF error encountered.
 func (br *BlockReader) Err() error { return br.err }
+
+// Offset returns the byte offset where the current block starts in the
+// underlying reader. Use with io.Seeker to re-read a specific block later.
+func (br *BlockReader) Offset() int64 { return br.offset }
 
 // Type returns the block type ("OSMHeader" or "OSMData").
 func (br *BlockReader) Type() string { return br.blockType }
