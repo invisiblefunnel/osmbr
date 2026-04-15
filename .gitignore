@@ -1,4 +1,5 @@
 *.osm.pbf
+!testdata/*.osm.pbf
 *.pprof
 *.test
 
