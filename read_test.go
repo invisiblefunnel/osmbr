@@ -33,6 +33,7 @@ func TestReadAll(t *testing.T) {
 		hasHeader                      bool
 	)
 
+	var dec osmbr.Decompressor
 	br := osmbr.NewBlockReader(f)
 	for br.Next() {
 		if br.Type() == "OSMHeader" {
@@ -44,7 +45,11 @@ func TestReadAll(t *testing.T) {
 		}
 		blocks++
 
-		if err := pb.DecodeFrom(br.Data()); err != nil {
+		data, err := dec.Decompress(br.Blob())
+		if err != nil {
+			t.Fatalf("block %d: Decompress: %v", blocks, err)
+		}
+		if err := pb.DecodeFrom(data); err != nil {
 			t.Fatalf("block %d: DecodeFrom: %v", blocks, err)
 		}
 
@@ -216,6 +221,7 @@ func TestNodeValues(t *testing.T) {
 	defer f.Close()
 
 	var (
+		dec   osmbr.Decompressor
 		pb    osmbr.PrimitiveBlock
 		dnBuf osmbr.DenseNodesBuf
 		diBuf osmbr.DenseInfoBuf
@@ -226,7 +232,11 @@ func TestNodeValues(t *testing.T) {
 		if br.Type() != "OSMData" {
 			continue
 		}
-		if err := pb.DecodeFrom(br.Data()); err != nil {
+		data, err := dec.Decompress(br.Blob())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := pb.DecodeFrom(data); err != nil {
 			t.Fatal(err)
 		}
 
@@ -353,6 +363,7 @@ func TestWayValues(t *testing.T) {
 	defer f.Close()
 
 	var (
+		dec  osmbr.Decompressor
 		pb   osmbr.PrimitiveBlock
 		wBuf osmbr.WayBuf
 		iBuf osmbr.InfoBuf
@@ -363,7 +374,11 @@ func TestWayValues(t *testing.T) {
 		if br.Type() != "OSMData" {
 			continue
 		}
-		if err := pb.DecodeFrom(br.Data()); err != nil {
+		data, err := dec.Decompress(br.Blob())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := pb.DecodeFrom(data); err != nil {
 			t.Fatal(err)
 		}
 
@@ -497,6 +512,7 @@ func TestRelationValues(t *testing.T) {
 	defer f.Close()
 
 	var (
+		dec  osmbr.Decompressor
 		pb   osmbr.PrimitiveBlock
 		rBuf osmbr.RelationBuf
 		iBuf osmbr.InfoBuf
@@ -507,7 +523,11 @@ func TestRelationValues(t *testing.T) {
 		if br.Type() != "OSMData" {
 			continue
 		}
-		if err := pb.DecodeFrom(br.Data()); err != nil {
+		data, err := dec.Decompress(br.Blob())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := pb.DecodeFrom(data); err != nil {
 			t.Fatal(err)
 		}
 

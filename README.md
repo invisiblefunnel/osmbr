@@ -27,6 +27,7 @@ if err != nil {
 defer f.Close()
 
 var (
+    dec   osmbr.Decompressor
     pb    osmbr.PrimitiveBlock
     dnBuf osmbr.DenseNodesBuf
     wBuf  osmbr.WayBuf
@@ -38,7 +39,11 @@ for br.Next() {
     if br.Type() != "OSMData" {
         continue
     }
-    if err := pb.DecodeFrom(br.Data()); err != nil {
+    data, err := dec.Decompress(br.Blob())
+    if err != nil {
+        log.Fatal(err)
+    }
+    if err := pb.DecodeFrom(data); err != nil {
         log.Fatal(err)
     }
 
@@ -91,11 +96,15 @@ The reading pipeline flows top-down:
 
 ### BlockReader
 
-`NewBlockReader(r io.Reader)` reads and decompresses PBF file blocks sequentially. Call `Next()` to advance, `Type()` for the block type (`"OSMHeader"` or `"OSMData"`), and `Data()` for the decompressed protobuf bytes. Uses [klauspost/compress](https://github.com/klauspost/compress) for zlib decompression with reusable decompressor state.
+`NewBlockReader(r io.Reader)` reads PBF file blocks sequentially. Call `Next()` to advance, `Type()` for the block type (`"OSMHeader"` or `"OSMData"`), and `Blob()` for the raw Blob protobuf bytes. Use a `Decompressor` to decompress them.
+
+### Decompressor
+
+`Decompress(blob []byte)` parses and decompresses a raw Blob message, returning the decompressed payload. Allocate one per goroutine and reuse across blocks. Uses [klauspost/compress](https://github.com/klauspost/compress) for zlib decompression with reusable decompressor state.
 
 ### PrimitiveBlock
 
-`DecodeFrom(data []byte)` populates the block's string table, granularity, and coordinate offsets. Call `Groups()` to get a `GroupScanner`. String table entries are zero-copy slices into the block data — copy any strings you need to retain past the next `BlockReader.Next()` call.
+`DecodeFrom(data []byte)` populates the block's string table, granularity, and coordinate offsets from decompressed block data. Call `Groups()` to get a `GroupScanner`. String table entries are zero-copy slices into the data — copy any strings you need to retain past the next `Decompress` call.
 
 - `String(i int) []byte` — look up a string table entry by index
 - `Granularity` / `LatOffset` / `LonOffset` / `DateGranularity` — coordinate and timestamp conversion parameters
