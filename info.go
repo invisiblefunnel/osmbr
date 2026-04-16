@@ -7,7 +7,7 @@ import "github.com/paulmach/protoscan"
 // NodeScanner.Next to populate it; nil skips decoding entirely.
 type InfoBuf struct {
 	Version    int32
-	Timestamp  int64  // milliseconds since Unix epoch
+	Timestamp  int64 // milliseconds since Unix epoch
 	Changeset  int64
 	UID        int32
 	UserSID    uint32 // index into the block's string table

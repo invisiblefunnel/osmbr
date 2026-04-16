@@ -109,9 +109,9 @@ func TestReadAll(t *testing.T) {
 					t.Fatalf("block %d: RelationScanner: %v", blocks, err)
 				}
 			}
-			if err := gs.Err(); err != nil {
-				t.Fatalf("block %d: GroupScanner: %v", blocks, err)
-			}
+		}
+		if err := gs.Err(); err != nil {
+			t.Fatalf("block %d: GroupScanner: %v", blocks, err)
 		}
 	}
 	if err := br.Err(); err != nil {
@@ -400,8 +400,8 @@ func TestWayValues(t *testing.T) {
 		},
 		// Small way (2 refs, 3 tags)
 		23130799: {
-			refs: []int64{249753687, 249753688},
-			tags: map[string]string{"access": "private", "highway": "footway", "man_made": "pier"},
+			refs:        []int64{249753687, 249753688},
+			tags:        map[string]string{"access": "private", "highway": "footway", "man_made": "pier"},
 			version:     3,
 			timestampMs: 1560846714000,
 		},
