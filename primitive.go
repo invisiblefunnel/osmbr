@@ -7,10 +7,11 @@ import (
 )
 
 // PrimitiveBlock holds the decoded metadata and string table for an OSMData block.
-// Call DecodeFrom to populate from BlockReader.Data(). Call Groups to iterate groups.
+// Call DecodeFrom to populate from a Decompressor's output. Call Groups to iterate groups.
 //
 // String table entries are zero-copy slices into the data passed to DecodeFrom.
-// They are only valid until the next call to DecodeFrom or BlockReader.Next.
+// They are only valid until the next call to DecodeFrom on this block or to
+// Decompressor.Decompress on the underlying decompressor (which reuses its buffer).
 type PrimitiveBlock struct {
 	// Granularity is the coordinate granularity in nanodegrees (default 100).
 	// To convert a raw lat/lon integer to nanodegrees:
@@ -29,11 +30,11 @@ type PrimitiveBlock struct {
 	data    []byte   // retained for re-scanning groups
 }
 
-// DecodeFrom populates the PrimitiveBlock from raw OSMData block bytes.
-// data is the value returned by BlockReader.Data().
+// DecodeFrom populates the PrimitiveBlock from decompressed OSMData block bytes
+// (typically the result of Decompressor.Decompress).
 //
 // String table entries reference data's memory. Copy entries you need to
-// retain past the next BlockReader.Next call.
+// retain past the next Decompressor.Decompress or DecodeFrom call.
 func (pb *PrimitiveBlock) DecodeFrom(data []byte) error {
 	// Reset to defaults
 	pb.Granularity = 100
@@ -105,8 +106,9 @@ func (pb *PrimitiveBlock) DecodeFrom(data []byte) error {
 }
 
 // String returns the string table entry at index i.
-// The returned slice is a zero-copy reference into the block data.
-// Copy it if you need to retain it past the next BlockReader.Next call.
+// The returned slice is a zero-copy reference into the block data and is only
+// valid until the next call to DecodeFrom or Decompressor.Decompress.
+// Panics if i is out of range.
 func (pb *PrimitiveBlock) String(i int) []byte { return pb.strings[i] }
 
 // NumStrings returns the number of entries in the string table.
