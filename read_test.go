@@ -13,12 +13,19 @@ import (
 
 const testFile = "testdata/us-virgin-islands-260414.osm.pbf"
 
-func TestReadAll(t *testing.T) {
+// openTestPBF opens the bundled test PBF file and registers a cleanup to close it.
+func openTestPBF(t *testing.T) *os.File {
+	t.Helper()
 	f, err := os.Open(testFile)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
+	t.Cleanup(func() { f.Close() })
+	return f
+}
+
+func TestReadAll(t *testing.T) {
+	f := openTestPBF(t)
 
 	var (
 		pb    osmbr.PrimitiveBlock
@@ -136,11 +143,7 @@ func TestReadAll(t *testing.T) {
 }
 
 func TestBlockOffsets(t *testing.T) {
-	f, err := os.Open(testFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer f.Close()
+	f := openTestPBF(t)
 
 	// First pass: record each block's offset and type.
 	type blockInfo struct {
@@ -179,11 +182,7 @@ func TestBlockOffsets(t *testing.T) {
 }
 
 func TestHeader(t *testing.T) {
-	f, err := os.Open(testFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer f.Close()
+	f := openTestPBF(t)
 
 	var dec osmbr.Decompressor
 	br := osmbr.NewBlockReader(f)
@@ -282,11 +281,7 @@ func TestNodeValues(t *testing.T) {
 
 	got := make(map[int64]nodeExpect)
 
-	f, err := os.Open(testFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer f.Close()
+	f := openTestPBF(t)
 
 	var (
 		dec   osmbr.Decompressor
@@ -424,11 +419,7 @@ func TestWayValues(t *testing.T) {
 
 	got := make(map[int64]wayExpect)
 
-	f, err := os.Open(testFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer f.Close()
+	f := openTestPBF(t)
 
 	var (
 		dec  osmbr.Decompressor
@@ -573,11 +564,7 @@ func TestRelationValues(t *testing.T) {
 
 	got := make(map[int64]relExpect)
 
-	f, err := os.Open(testFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer f.Close()
+	f := openTestPBF(t)
 
 	var (
 		dec  osmbr.Decompressor
