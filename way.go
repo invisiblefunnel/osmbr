@@ -85,7 +85,7 @@ func (ws *WayScanner) Next(buf *WayBuf, info *InfoBuf) (id int64, ok bool) {
 	}
 
 	if err := ws.msg.Err(); err != nil {
-		ws.err = err
+		ws.err = fmt.Errorf("osmbr: PrimitiveGroup: %w", err)
 	}
 	return 0, false
 }

@@ -100,7 +100,7 @@ func (rs *RelationScanner) Next(buf *RelationBuf, info *InfoBuf) (id int64, ok b
 	}
 
 	if err := rs.msg.Err(); err != nil {
-		rs.err = err
+		rs.err = fmt.Errorf("osmbr: PrimitiveGroup: %w", err)
 	}
 	return 0, false
 }

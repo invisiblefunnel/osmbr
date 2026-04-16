@@ -89,7 +89,7 @@ func (ns *NodeScanner) Next(buf *NodeBuf, info *InfoBuf) (id, lat, lon int64, ok
 	}
 
 	if err := ns.msg.Err(); err != nil {
-		ns.err = err
+		ns.err = fmt.Errorf("osmbr: PrimitiveGroup: %w", err)
 	}
 	return 0, 0, 0, false
 }
