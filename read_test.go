@@ -175,6 +175,71 @@ func TestBlockOffsets(t *testing.T) {
 	}
 }
 
+func TestHeader(t *testing.T) {
+	f, err := os.Open(testFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	var dec osmbr.Decompressor
+	br := osmbr.NewBlockReader(f)
+	if !br.Next() {
+		t.Fatal("expected a block")
+	}
+	if br.Type() != "OSMHeader" {
+		t.Fatalf("first block type = %q, want OSMHeader", br.Type())
+	}
+
+	data, err := dec.Decompress(br.Blob())
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, err := osmbr.DecodeHeader(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// BBox (nanodegrees → degrees for comparison)
+	checkCoord := func(name string, got int64, wantDeg float64) {
+		gotDeg := float64(got) / 1e9
+		if math.Abs(gotDeg-wantDeg) > 1e-7 {
+			t.Errorf("BBox.%s = %.7f, want %.7f", name, gotDeg, wantDeg)
+		}
+	}
+	checkCoord("Bottom", h.BBox.Bottom, 17.2824650)
+	checkCoord("Top", h.BBox.Top, 18.4859590)
+	checkCoord("Left", h.BBox.Left, -65.1750200)
+	checkCoord("Right", h.BBox.Right, -63.9555370)
+
+	wantRequired := []string{"OsmSchema-V0.6", "DenseNodes"}
+	if !slices.Equal(h.RequiredFeatures, wantRequired) {
+		t.Errorf("RequiredFeatures = %v, want %v", h.RequiredFeatures, wantRequired)
+	}
+
+	wantOptional := []string{"Sort.Type_then_ID"}
+	if !slices.Equal(h.OptionalFeatures, wantOptional) {
+		t.Errorf("OptionalFeatures = %v, want %v", h.OptionalFeatures, wantOptional)
+	}
+
+	if h.WritingProgram != "osmium/1.16.0" {
+		t.Errorf("WritingProgram = %q, want %q", h.WritingProgram, "osmium/1.16.0")
+	}
+
+	if h.ReplicationTimestamp != 1776198090 {
+		t.Errorf("ReplicationTimestamp = %d, want 1776198090", h.ReplicationTimestamp)
+	}
+
+	if h.ReplicationSequenceNumber != 1602 {
+		t.Errorf("ReplicationSequenceNumber = %d, want 1602", h.ReplicationSequenceNumber)
+	}
+
+	wantURL := "https://download.geofabrik.de/north-america/us/us-virgin-islands-updates"
+	if h.ReplicationBaseURL != wantURL {
+		t.Errorf("ReplicationBaseURL = %q, want %q", h.ReplicationBaseURL, wantURL)
+	}
+}
+
 // Expected values below are derived from github.com/paulmach/osm v0.9.0 reading
 // the same PBF file. That library is NOT a dependency of this package; the values
 // are hardcoded so the tests are self-contained.
