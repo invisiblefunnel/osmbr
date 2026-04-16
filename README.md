@@ -101,6 +101,10 @@ The reading pipeline flows top-down:
 
 `NewBlockReader(r io.Reader)` reads PBF file blocks sequentially. Call `Next()` to advance, `Type()` for the block type (`"OSMHeader"` or `"OSMData"`), and `Blob()` for the raw Blob protobuf bytes. Use a `Decompressor` to decompress them.
 
+### Header
+
+`DecodeHeader(data []byte)` decodes a decompressed `OSMHeader` block, returning a `Header` with the bounding box, required/optional features, writing program, source, and replication metadata.
+
 ### Decompressor
 
 `Decompress(blob []byte)` parses and decompresses a raw Blob message, returning the decompressed payload. Allocate one per goroutine and reuse across blocks. Uses [klauspost/compress](https://github.com/klauspost/compress) for zlib decompression with reusable decompressor state.
@@ -114,7 +118,7 @@ The reading pipeline flows top-down:
 
 ### GroupScanner
 
-Iterates over `PrimitiveGroup` messages within a block. Call `Type()` to check the group kind, then use the appropriate decoder:
+Iterates over `PrimitiveGroup` messages within a block. Call `Type()` to check the group kind, then use the appropriate decoder. Check `Err()` after iteration finishes to distinguish error from EOF.
 
 | GroupType | Decoder |
 |---|---|
@@ -213,7 +217,6 @@ This library intentionally does not provide:
 - **Domain types** — No `Node`/`Way`/`Relation` structs. Build your own from the buffer fields.
 - **Filtering** — All entities in a block are decoded. Skip what you don't need in your loop.
 - **Concurrency** — Single-threaded. Parallelize at the block level in your own code.
-- **Header decoding** — `OSMHeader` blocks are identified by `BlockReader.Type()` but not decoded.
 - **Semantic conversion** — Coordinates stay as raw integers; timestamps stay as raw values. The caller applies the conversion.
 
 ## Acknowledgments
