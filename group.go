@@ -1,6 +1,10 @@
 package osmbr
 
-import "github.com/paulmach/protoscan"
+import (
+	"fmt"
+
+	"github.com/paulmach/protoscan"
+)
 
 // GroupType identifies the kind of entities in a PrimitiveGroup.
 type GroupType int8
@@ -21,14 +25,17 @@ type GroupScanner struct {
 	peek      protoscan.Message
 	groupData []byte // raw bytes of current PrimitiveGroup (zero-copy)
 	gType     GroupType
+	err       error
 }
 
-// Next advances to the next PrimitiveGroup. Returns false when done.
+// Next advances to the next PrimitiveGroup. Returns false on EOF or error.
+// Call Err to distinguish between them.
 func (gs *GroupScanner) Next() bool {
 	for gs.msg.Next() {
 		if gs.msg.FieldNumber() == 2 { // primitivegroup
 			d, err := gs.msg.MessageData()
 			if err != nil {
+				gs.err = fmt.Errorf("osmbr: PrimitiveGroup message: %w", err)
 				return false
 			}
 			gs.groupData = d
@@ -49,17 +56,22 @@ func (gs *GroupScanner) Next() bool {
 				case 5:
 					gs.gType = GroupTypeChangesets
 				}
-				gs.peek.Skip()
 			}
 			return true
 		}
 		gs.msg.Skip()
+	}
+	if err := gs.msg.Err(); err != nil {
+		gs.err = fmt.Errorf("osmbr: PrimitiveBlock: %w", err)
 	}
 	return false
 }
 
 // Type returns the GroupType of the current group.
 func (gs *GroupScanner) Type() GroupType { return gs.gType }
+
+// Err returns the first error encountered during iteration.
+func (gs *GroupScanner) Err() error { return gs.err }
 
 // DecodeDenseNodes decodes the current DenseNodes group into buf.
 // Only valid when Type() == GroupTypeDense.

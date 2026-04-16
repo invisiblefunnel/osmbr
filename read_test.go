@@ -109,6 +109,9 @@ func TestReadAll(t *testing.T) {
 					t.Fatalf("block %d: RelationScanner: %v", blocks, err)
 				}
 			}
+			if err := gs.Err(); err != nil {
+				t.Fatalf("block %d: GroupScanner: %v", blocks, err)
+			}
 		}
 	}
 	if err := br.Err(); err != nil {

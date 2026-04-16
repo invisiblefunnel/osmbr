@@ -84,6 +84,9 @@ for br.Next() {
             }
         }
     }
+    if err := gs.Err(); err != nil {
+        log.Fatal(err)
+    }
 }
 if err := br.Err(); err != nil {
     log.Fatal(err)

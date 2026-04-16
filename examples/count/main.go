@@ -99,6 +99,9 @@ func main() {
 						}
 					}
 				}
+				if err := gs.Err(); err != nil {
+					fmt.Fprintln(os.Stderr, err)
+				}
 				results <- r
 			}
 		}()
