@@ -55,12 +55,16 @@ func (d *Decompressor) Decompress(blob []byte) ([]byte, error) {
 			}
 			zlibData = b
 			hasZlib = true
+		case 4: // lzma_data
+			return nil, fmt.Errorf("osmbr: unsupported Blob compression: lzma")
+		case 5: // OBSOLETE_bzip2_data
+			return nil, fmt.Errorf("osmbr: unsupported Blob compression: bzip2 (obsolete)")
+		case 6: // lz4_data
+			return nil, fmt.Errorf("osmbr: unsupported Blob compression: lz4")
+		case 7: // zstd_data
+			return nil, fmt.Errorf("osmbr: unsupported Blob compression: zstd")
 		default:
-			fn := msg.FieldNumber()
 			msg.Skip()
-			if fn == 4 || fn == 5 {
-				return nil, fmt.Errorf("osmbr: unsupported Blob compression (field %d)", fn)
-			}
 		}
 	}
 	if err := msg.Err(); err != nil {
