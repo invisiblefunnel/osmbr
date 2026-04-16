@@ -222,3 +222,5 @@ This library intentionally does not provide:
 ## Acknowledgments
 
 Inspired by [tidwall/osmfile](https://github.com/tidwall/osmfile).
+
+Portions of the implementation, tests, and documentation were developed with the assistance of [Claude Code](https://claude.com/claude-code).
