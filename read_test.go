@@ -60,6 +60,9 @@ func TestReadAll(t *testing.T) {
 		if err := pb.DecodeFrom(data); err != nil {
 			t.Fatalf("block %d: DecodeFrom: %v", blocks, err)
 		}
+		if pb.NumStrings() == 0 {
+			t.Errorf("block %d: NumStrings = 0, want > 0", blocks)
+		}
 
 		gs := pb.Groups()
 		for gs.Next() {
