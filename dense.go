@@ -97,6 +97,9 @@ func DecodeDenseNodes(groupData []byte, buf *DenseNodesBuf, info *DenseInfoBuf) 
 		}
 		break // only one DenseNodes per PrimitiveGroup
 	}
+	if err := pgMsg.Err(); err != nil {
+		return fmt.Errorf("osmbr: PrimitiveGroup: %w", err)
+	}
 
 	if len(buf.IDs) != len(buf.Lats) || len(buf.IDs) != len(buf.Lons) {
 		return fmt.Errorf("osmbr: DenseNodes length mismatch: IDs=%d Lats=%d Lons=%d",
