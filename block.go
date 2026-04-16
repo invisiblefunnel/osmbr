@@ -103,12 +103,12 @@ func (br *BlockReader) Next() bool {
 				br.blockType = string(b)
 			}
 		case 3:
-			v, err := hMsg.Int64()
+			v, err := hMsg.Int32()
 			if err != nil {
 				br.err = fmt.Errorf("osmbr: BlobHeader.datasize: %w", err)
 				return false
 			}
-			dataSize = v
+			dataSize = int64(v)
 		default:
 			hMsg.Skip()
 		}

@@ -71,17 +71,17 @@ func (pb *PrimitiveBlock) DecodeFrom(data []byte) error {
 		case 2: // primitivegroup — deferred; re-scanned by Groups()
 			msg.Skip()
 		case 17: // granularity
-			v, err := msg.Int64()
+			v, err := msg.Int32()
 			if err != nil {
 				return fmt.Errorf("osmbr: PrimitiveBlock.granularity: %w", err)
 			}
-			pb.Granularity = int32(v)
+			pb.Granularity = v
 		case 18: // date_granularity
-			v, err := msg.Int64()
+			v, err := msg.Int32()
 			if err != nil {
 				return fmt.Errorf("osmbr: PrimitiveBlock.date_granularity: %w", err)
 			}
-			pb.DateGranularity = int32(v)
+			pb.DateGranularity = v
 		case 19: // lat_offset
 			v, err := msg.Int64()
 			if err != nil {

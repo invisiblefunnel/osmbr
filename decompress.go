@@ -43,7 +43,7 @@ func (d *Decompressor) Decompress(blob []byte) ([]byte, error) {
 			rawData = b
 			hasRaw = true
 		case 2: // raw_size
-			n, err := msg.Int64()
+			n, err := msg.Int32()
 			if err != nil {
 				return nil, fmt.Errorf("osmbr: Blob.raw_size: %w", err)
 			}
