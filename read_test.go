@@ -43,14 +43,15 @@ func TestReadAll(t *testing.T) {
 	var dec osmbr.Decompressor
 	br := osmbr.NewBlockReader(f)
 	for br.Next() {
-		if br.Type() == "OSMHeader" {
+		switch br.Type() {
+		case "OSMHeader":
 			hasHeader = true
 			continue
-		}
-		if br.Type() != "OSMData" {
+		case "OSMData":
+			blocks++
+		default:
 			continue
 		}
-		blocks++
 
 		data, err := dec.Decompress(br.Blob())
 		if err != nil {
@@ -314,22 +315,19 @@ func TestNodeValues(t *testing.T) {
 
 			j := 0
 			for i, id := range dnBuf.IDs {
-				// Collect this node's tags
+				// Collect this node's tags. Lazy-allocate so untagged nodes don't allocate.
 				var tags map[string]string
-				if len(dnBuf.KeysVals) > 0 {
-					m := map[string]string{}
-					for j < len(dnBuf.KeysVals) && dnBuf.KeysVals[j] != 0 {
-						key := string(pb.String(int(dnBuf.KeysVals[j])))
-						val := string(pb.String(int(dnBuf.KeysVals[j+1])))
-						m[key] = val
-						j += 2
+				for j < len(dnBuf.KeysVals) && dnBuf.KeysVals[j] != 0 {
+					if tags == nil {
+						tags = map[string]string{}
 					}
-					if j < len(dnBuf.KeysVals) {
-						j++ // skip 0 delimiter
-					}
-					if len(m) > 0 {
-						tags = m
-					}
+					key := string(pb.String(int(dnBuf.KeysVals[j])))
+					val := string(pb.String(int(dnBuf.KeysVals[j+1])))
+					tags[key] = val
+					j += 2
+				}
+				if j < len(dnBuf.KeysVals) {
+					j++ // skip 0 delimiter
 				}
 
 				if _, needed := want[id]; needed {
