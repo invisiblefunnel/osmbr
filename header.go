@@ -122,5 +122,8 @@ func decodeHeaderBBox(data []byte) (HeaderBBox, error) {
 			return bb, fmt.Errorf("osmbr: HeaderBBox field %d: %w", msg.FieldNumber(), err)
 		}
 	}
-	return bb, msg.Err()
+	if err := msg.Err(); err != nil {
+		return bb, fmt.Errorf("osmbr: HeaderBBox: %w", err)
+	}
+	return bb, nil
 }

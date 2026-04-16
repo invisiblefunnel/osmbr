@@ -98,7 +98,10 @@ func (pb *PrimitiveBlock) DecodeFrom(data []byte) error {
 			msg.Skip()
 		}
 	}
-	return msg.Err()
+	if err := msg.Err(); err != nil {
+		return fmt.Errorf("osmbr: PrimitiveBlock: %w", err)
+	}
+	return nil
 }
 
 // String returns the string table entry at index i.
