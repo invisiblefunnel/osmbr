@@ -47,6 +47,9 @@ func (d *Decompressor) Decompress(blob []byte) ([]byte, error) {
 			if err != nil {
 				return nil, fmt.Errorf("osmbr: Blob.raw_size: %w", err)
 			}
+			if n < 0 || n > maxBlobSize {
+				return nil, fmt.Errorf("osmbr: invalid Blob.raw_size: %d", n)
+			}
 			rawSize = int(n)
 		case 3: // zlib_data
 			b, err := msg.Bytes()

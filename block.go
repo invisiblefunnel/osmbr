@@ -9,6 +9,13 @@ import (
 	"github.com/paulmach/protoscan"
 )
 
+// PBF format limits per the OSM PBF spec.
+// https://wiki.openstreetmap.org/wiki/PBF_Format
+const (
+	maxBlobHeaderSize = 64 * 1024        // 64 KiB
+	maxBlobSize       = 32 * 1024 * 1024 // 32 MiB (compressed and uncompressed)
+)
+
 var (
 	bOSMHeader = []byte("OSMHeader")
 	bOSMData   = []byte("OSMData")
@@ -56,7 +63,7 @@ func (br *BlockReader) Next() bool {
 	br.pos += 4
 
 	headerLen := binary.BigEndian.Uint32(br.lenBuf[:])
-	if headerLen > 65536 {
+	if headerLen > maxBlobHeaderSize {
 		br.err = fmt.Errorf("osmbr: BlobHeader too large: %d bytes", headerLen)
 		return false
 	}
@@ -110,7 +117,7 @@ func (br *BlockReader) Next() bool {
 		br.err = fmt.Errorf("osmbr: BlobHeader: %w", err)
 		return false
 	}
-	if dataSize <= 0 || dataSize > 33554432 {
+	if dataSize <= 0 || dataSize > maxBlobSize {
 		br.err = fmt.Errorf("osmbr: invalid BlobHeader.datasize: %d", dataSize)
 		return false
 	}
