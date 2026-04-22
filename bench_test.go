@@ -599,85 +599,98 @@ func BenchmarkIterateAllGroups(b *testing.B) {
 	}
 }
 
+// fullPipelineBufs holds all reusable buffers for the full-pipeline
+// benchmarks. Lifting them out of the timed loop matches how real consumers
+// use the library (one buffer set per worker, reused across blocks — see
+// examples/count) and ensures the benchmark measures the steady-state hot
+// path rather than per-iteration buffer growth.
+type fullPipelineBufs struct {
+	dec   osmbr.Decompressor
+	pb    osmbr.PrimitiveBlock
+	dnBuf osmbr.DenseNodesBuf
+	nBuf  osmbr.NodeBuf
+	wBuf  osmbr.WayBuf
+	rBuf  osmbr.RelationBuf
+	iBuf  osmbr.InfoBuf
+	diBuf osmbr.DenseInfoBuf
+}
+
 // B5: Full pipeline without Info — the canonical regression anchor.
 // Mirrors the decode path in examples/count, serialized into one goroutine.
 func BenchmarkReadFullNoInfo(b *testing.B) {
 	sets := loadTestPBFSets(b)
+	var bufs fullPipelineBufs
+	runFullPipeline(b, sets.file, &bufs, false) // warm up
 	b.ReportAllocs()
 	b.SetBytes(int64(len(sets.file)))
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		runFullPipeline(b, sets.file, false)
+		runFullPipeline(b, sets.file, &bufs, false)
 	}
 }
 
 // B6: Full pipeline with Info buffers — quantifies metadata cost.
 func BenchmarkReadFullWithInfo(b *testing.B) {
 	sets := loadTestPBFSets(b)
+	var bufs fullPipelineBufs
+	runFullPipeline(b, sets.file, &bufs, true) // warm up
 	b.ReportAllocs()
 	b.SetBytes(int64(len(sets.file)))
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		runFullPipeline(b, sets.file, true)
+		runFullPipeline(b, sets.file, &bufs, true)
 	}
 }
 
 // runFullPipeline walks the entire file through BlockReader → Decompressor →
-// PrimitiveBlock.DecodeFrom → GroupScanner → per-type entity decode.
-func runFullPipeline(b *testing.B, file []byte, withInfo bool) {
+// PrimitiveBlock.DecodeFrom → GroupScanner → per-type entity decode, reusing
+// the caller-provided bufs so steady-state allocation behaviour is visible.
+func runFullPipeline(b *testing.B, file []byte, bufs *fullPipelineBufs, withInfo bool) {
 	b.Helper()
 	var (
-		dec   osmbr.Decompressor
-		pb    osmbr.PrimitiveBlock
-		dnBuf osmbr.DenseNodesBuf
-		nBuf  osmbr.NodeBuf
-		wBuf  osmbr.WayBuf
-		rBuf  osmbr.RelationBuf
-		iBuf  osmbr.InfoBuf
-		diBuf osmbr.DenseInfoBuf
 		ip    *osmbr.InfoBuf
 		diPtr *osmbr.DenseInfoBuf
 	)
 	if withInfo {
-		ip = &iBuf
-		diPtr = &diBuf
+		ip = &bufs.iBuf
+		diPtr = &bufs.diBuf
 	}
 	br := osmbr.NewBlockReader(bytes.NewReader(file))
 	for br.Next() {
 		if br.Type() != "OSMData" {
 			continue
 		}
-		data, err := dec.Decompress(br.Blob())
+		data, err := bufs.dec.Decompress(br.Blob())
 		if err != nil {
 			b.Fatal(err)
 		}
-		if err := pb.DecodeFrom(data); err != nil {
+		if err := bufs.pb.DecodeFrom(data); err != nil {
 			b.Fatal(err)
 		}
-		gs := pb.Groups()
+		gs := bufs.pb.Groups()
 		for gs.Next() {
 			switch gs.Type() {
 			case osmbr.GroupTypeDense:
-				if err := gs.DecodeDenseNodes(&dnBuf, diPtr); err != nil {
+				if err := gs.DecodeDenseNodes(&bufs.dnBuf, diPtr); err != nil {
 					b.Fatal(err)
 				}
 			case osmbr.GroupTypeNodes:
 				ns := gs.NodeScanner()
-				for _, _, _, ok := ns.Next(&nBuf, ip); ok; _, _, _, ok = ns.Next(&nBuf, ip) {
+				for _, _, _, ok := ns.Next(&bufs.nBuf, ip); ok; _, _, _, ok = ns.Next(&bufs.nBuf, ip) {
 				}
 				if err := ns.Err(); err != nil {
 					b.Fatal(err)
 				}
 			case osmbr.GroupTypeWays:
 				ws := gs.WayScanner()
-				for _, ok := ws.Next(&wBuf, ip); ok; _, ok = ws.Next(&wBuf, ip) {
+				for _, ok := ws.Next(&bufs.wBuf, ip); ok; _, ok = ws.Next(&bufs.wBuf, ip) {
 				}
 				if err := ws.Err(); err != nil {
 					b.Fatal(err)
 				}
 			case osmbr.GroupTypeRelations:
 				rs := gs.RelationScanner()
-				for _, ok := rs.Next(&rBuf, ip); ok; _, ok = rs.Next(&rBuf, ip) {
+				for _, ok := rs.Next(&bufs.rBuf, ip); ok; _, ok = rs.Next(&bufs.rBuf, ip) {
 				}
 				if err := rs.Err(); err != nil {
 					b.Fatal(err)
