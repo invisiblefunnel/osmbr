@@ -122,6 +122,72 @@ func TestBlockReaderUnknownBlockType(t *testing.T) {
 	}
 }
 
+func TestBlockReaderReset(t *testing.T) {
+	blob := pbLenDelim(1, []byte("first"))
+	frame := pbfFrame("OSMData", blob)
+
+	br := osmbr.NewBlockReader(bytes.NewReader(frame))
+	if !br.Next() {
+		t.Fatalf("Next returned false: %v", br.Err())
+	}
+	if string(br.Blob()) != string(blob) {
+		t.Errorf("first walk Blob = %x, want %x", br.Blob(), blob)
+	}
+	firstOffset := br.Offset()
+	if br.Next() {
+		t.Fatal("Next should return false after the only block")
+	}
+
+	// After Reset, a second walk over the same input must look identical
+	// to a freshly-constructed reader's.
+	blob2 := pbLenDelim(1, []byte("second"))
+	frame2 := pbfFrame("OSMData", blob2)
+	br.Reset(bytes.NewReader(frame2))
+
+	if br.Err() != nil {
+		t.Errorf("Err after Reset = %v, want nil", br.Err())
+	}
+	if br.Type() != "" {
+		t.Errorf("Type after Reset = %q, want empty", br.Type())
+	}
+	if br.Offset() != 0 {
+		t.Errorf("Offset after Reset = %d, want 0", br.Offset())
+	}
+	if !br.Next() {
+		t.Fatalf("Next after Reset returned false: %v", br.Err())
+	}
+	if br.Offset() != 0 {
+		t.Errorf("Offset after Reset + Next = %d, want 0", br.Offset())
+	}
+	if !bytes.Equal(br.Blob(), blob2) {
+		t.Errorf("Blob after Reset = %x, want %x", br.Blob(), blob2)
+	}
+	_ = firstOffset // keep the first-walk check explicit
+}
+
+// TestBlockReaderResetAfterError confirms Reset clears a prior error so
+// the reader can be reused on fresh input.
+func TestBlockReaderResetAfterError(t *testing.T) {
+	// Truncated input → Err != nil after Next.
+	br := osmbr.NewBlockReader(bytes.NewReader([]byte{0, 0, 0, 100, 1, 2, 3}))
+	if br.Next() {
+		t.Fatal("Next on truncated input should return false")
+	}
+	if br.Err() == nil {
+		t.Fatal("expected error before Reset")
+	}
+
+	// Reset onto a valid frame — should walk cleanly.
+	frame := pbfFrame("OSMData", pbLenDelim(1, []byte("ok")))
+	br.Reset(bytes.NewReader(frame))
+	if err := br.Err(); err != nil {
+		t.Errorf("Err after Reset = %v, want nil", err)
+	}
+	if !br.Next() {
+		t.Fatalf("Next after Reset returned false: %v", br.Err())
+	}
+}
+
 func TestBlockReaderRoundTripSyntheticFrame(t *testing.T) {
 	blob := pbLenDelim(1, []byte("payload")) // raw blob
 	frame := pbfFrame("OSMData", blob)

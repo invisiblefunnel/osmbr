@@ -48,6 +48,19 @@ func NewBlockReader(r io.Reader) *BlockReader {
 	}
 }
 
+// Reset reuses br to read from r, preserving the internal header and blob
+// buffer capacities. Use this to walk many files with one BlockReader
+// instead of allocating a new one (and growing its blob buffer) per file.
+func (br *BlockReader) Reset(r io.Reader) {
+	br.r = r
+	br.headerBuf = br.headerBuf[:0]
+	br.blobBuf = br.blobBuf[:0]
+	br.blockType = ""
+	br.offset = 0
+	br.pos = 0
+	br.err = nil
+}
+
 // Next reads the next FileBlock. Returns false on EOF or error.
 // Call Err to distinguish between them.
 func (br *BlockReader) Next() bool {

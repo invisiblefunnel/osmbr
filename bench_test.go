@@ -531,6 +531,38 @@ func BenchmarkReadAllBlocks(b *testing.B) {
 	}
 }
 
+// B1b: BlockReader walk with Reset across iterations — quantifies the
+// alloc floor that goes away when a consumer reuses one BlockReader
+// across many files (e.g., a batch job over a directory of PBFs).
+func BenchmarkReadAllBlocksReset(b *testing.B) {
+	sets := loadTestPBFSets(b)
+	rdr := bytes.NewReader(sets.file)
+	br := osmbr.NewBlockReader(rdr)
+	// Warm up: grow blobBuf to the largest block size so the timed loop
+	// measures steady state.
+	for br.Next() {
+		_ = br.Type()
+		_ = br.Blob()
+	}
+	if err := br.Err(); err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	b.SetBytes(int64(len(sets.file)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		rdr.Reset(sets.file)
+		br.Reset(rdr)
+		for br.Next() {
+			_ = br.Type()
+			_ = br.Blob()
+		}
+		if err := br.Err(); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 // B2: Decompressor over preloaded OSMData blobs — isolates zlib cost.
 func BenchmarkDecompressAllBlobs(b *testing.B) {
 	sets := loadTestPBFSets(b)
