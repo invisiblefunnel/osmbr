@@ -57,6 +57,10 @@ func (gs *GroupScanner) Next() bool {
 					gs.gType = GroupTypeChangesets
 				}
 			}
+			if err := gs.peek.Err(); err != nil {
+				gs.err = fmt.Errorf("osmbr: PrimitiveGroup peek: %w", err)
+				return false
+			}
 			return true
 		}
 		gs.msg.Skip()

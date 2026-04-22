@@ -55,15 +55,9 @@ func (ws *WayScanner) Next(buf *WayBuf, info *InfoBuf) (id int64, ok bool) {
 			case 3: // vals (packed uint32)
 				buf.Vals, err = wayMsg.RepeatedUint32(buf.Vals)
 			case 4: // info
-				if info != nil {
-					infoData, e := wayMsg.MessageData()
-					if e != nil {
-						ws.err = fmt.Errorf("osmbr: Way.info: %w", e)
-						return 0, false
-					}
-					err = decodeInfo(infoData, info)
-				} else {
-					wayMsg.Skip()
+				if e := decodeOptionalInfo(&wayMsg, info, "Way"); e != nil {
+					ws.err = e
+					return 0, false
 				}
 			case 8: // refs (packed sint64, delta-encoded)
 				buf.Refs, err = wayMsg.RepeatedSint64(buf.Refs)

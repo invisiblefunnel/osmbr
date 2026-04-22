@@ -66,15 +66,9 @@ func (rs *RelationScanner) Next(buf *RelationBuf, info *InfoBuf) (id int64, ok b
 			case 3: // vals (packed uint32)
 				buf.Vals, err = relMsg.RepeatedUint32(buf.Vals)
 			case 4: // info
-				if info != nil {
-					infoData, e := relMsg.MessageData()
-					if e != nil {
-						rs.err = fmt.Errorf("osmbr: Relation.info: %w", e)
-						return 0, false
-					}
-					err = decodeInfo(infoData, info)
-				} else {
-					relMsg.Skip()
+				if e := decodeOptionalInfo(&relMsg, info, "Relation"); e != nil {
+					rs.err = e
+					return 0, false
 				}
 			case 8: // roles_sid (packed int32)
 				buf.RolesSID, err = relMsg.RepeatedInt32(buf.RolesSID)

@@ -45,53 +45,61 @@ func DecodeHeader(data []byte) (Header, error) {
 	var msg protoscan.Message
 	msg.Reset(data)
 	for msg.Next() {
-		var err error
 		switch msg.FieldNumber() {
 		case 1: // bbox
-			bboxData, e := msg.MessageData()
-			if e != nil {
-				return h, fmt.Errorf("osmbr: Header.bbox: %w", e)
+			bboxData, err := msg.MessageData()
+			if err != nil {
+				return h, fmt.Errorf("osmbr: Header.bbox: %w", err)
 			}
-			h.BBox, err = decodeHeaderBBox(bboxData)
+			bb, err := decodeHeaderBBox(bboxData)
+			if err != nil {
+				return h, err
+			}
+			h.BBox = bb
 		case 4: // required_features
-			b, e := msg.Bytes()
-			if e != nil {
-				return h, fmt.Errorf("osmbr: Header.required_features: %w", e)
+			b, err := msg.Bytes()
+			if err != nil {
+				return h, fmt.Errorf("osmbr: Header.required_features: %w", err)
 			}
 			h.RequiredFeatures = append(h.RequiredFeatures, string(b))
 		case 5: // optional_features
-			b, e := msg.Bytes()
-			if e != nil {
-				return h, fmt.Errorf("osmbr: Header.optional_features: %w", e)
+			b, err := msg.Bytes()
+			if err != nil {
+				return h, fmt.Errorf("osmbr: Header.optional_features: %w", err)
 			}
 			h.OptionalFeatures = append(h.OptionalFeatures, string(b))
 		case 16: // writingprogram
-			b, e := msg.Bytes()
-			if e != nil {
-				return h, fmt.Errorf("osmbr: Header.writingprogram: %w", e)
+			b, err := msg.Bytes()
+			if err != nil {
+				return h, fmt.Errorf("osmbr: Header.writingprogram: %w", err)
 			}
 			h.WritingProgram = string(b)
 		case 17: // source
-			b, e := msg.Bytes()
-			if e != nil {
-				return h, fmt.Errorf("osmbr: Header.source: %w", e)
+			b, err := msg.Bytes()
+			if err != nil {
+				return h, fmt.Errorf("osmbr: Header.source: %w", err)
 			}
 			h.Source = string(b)
 		case 32: // osmosis_replication_timestamp
-			h.ReplicationTimestamp, err = msg.Int64()
+			v, err := msg.Int64()
+			if err != nil {
+				return h, fmt.Errorf("osmbr: Header.osmosis_replication_timestamp: %w", err)
+			}
+			h.ReplicationTimestamp = v
 		case 33: // osmosis_replication_sequence_number
-			h.ReplicationSequenceNumber, err = msg.Int64()
+			v, err := msg.Int64()
+			if err != nil {
+				return h, fmt.Errorf("osmbr: Header.osmosis_replication_sequence_number: %w", err)
+			}
+			h.ReplicationSequenceNumber = v
 		case 34: // osmosis_replication_base_url
-			b, e := msg.Bytes()
-			if e != nil {
-				return h, fmt.Errorf("osmbr: Header.replication_base_url: %w", e)
+			b, err := msg.Bytes()
+			if err != nil {
+				return h, fmt.Errorf("osmbr: Header.osmosis_replication_base_url: %w", err)
 			}
 			h.ReplicationBaseURL = string(b)
 		default:
 			msg.Skip()
-		}
-		if err != nil {
-			return h, fmt.Errorf("osmbr: Header field %d: %w", msg.FieldNumber(), err)
 		}
 	}
 	if err := msg.Err(); err != nil {

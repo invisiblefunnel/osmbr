@@ -93,9 +93,23 @@ func (d *Decompressor) decompress(data []byte, rawSize int) ([]byte, error) {
 		if err != nil {
 			return nil, fmt.Errorf("osmbr: zlib.NewReader: %w", err)
 		}
-	} else if err = d.zlibR.(zlib.Resetter).Reset(&d.brReader, nil); err != nil {
-		d.zlibR = nil
-		return nil, fmt.Errorf("osmbr: zlib Reset: %w", err)
+	} else {
+		resetter, ok := d.zlibR.(zlib.Resetter)
+		if !ok {
+			// klauspost/compress/zlib documents that NewReader's return value
+			// also implements Resetter. If that ever stops holding, fall back
+			// to discarding the old reader and creating a fresh one.
+			d.zlibR.Close()
+			d.zlibR, err = zlib.NewReader(&d.brReader)
+			if err != nil {
+				d.zlibR = nil
+				return nil, fmt.Errorf("osmbr: zlib.NewReader: %w", err)
+			}
+		} else if err = resetter.Reset(&d.brReader, nil); err != nil {
+			d.zlibR.Close()
+			d.zlibR = nil
+			return nil, fmt.Errorf("osmbr: zlib Reset: %w", err)
+		}
 	}
 
 	if rawSize > 0 {
@@ -111,6 +125,7 @@ func (d *Decompressor) decompress(data []byte, rawSize int) ([]byte, error) {
 	}
 
 	if err != nil {
+		d.zlibR.Close()
 		d.zlibR = nil
 		return nil, fmt.Errorf("osmbr: decompress: %w", err)
 	}

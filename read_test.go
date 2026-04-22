@@ -354,7 +354,8 @@ func TestNodeValues(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for id, w := range want {
+	for _, id := range slices.Sorted(maps.Keys(want)) {
+		w := want[id]
 		g, ok := got[id]
 		if !ok {
 			t.Errorf("node %d: not found", id)
@@ -477,7 +478,8 @@ func TestWayValues(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for id, w := range want {
+	for _, id := range slices.Sorted(maps.Keys(want)) {
+		w := want[id]
 		g, ok := got[id]
 		if !ok {
 			t.Errorf("way %d: not found", id)
@@ -628,7 +630,8 @@ func TestRelationValues(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for id, w := range want {
+	for _, id := range slices.Sorted(maps.Keys(want)) {
+		w := want[id]
 		g, ok := got[id]
 		if !ok {
 			t.Errorf("relation %d: not found", id)

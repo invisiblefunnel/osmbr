@@ -58,15 +58,9 @@ func (ns *NodeScanner) Next(buf *NodeBuf, info *InfoBuf) (id, lat, lon int64, ok
 			case 3: // vals (packed uint32)
 				buf.Vals, err = nodeMsg.RepeatedUint32(buf.Vals)
 			case 4: // info
-				if info != nil {
-					infoData, e := nodeMsg.MessageData()
-					if e != nil {
-						ns.err = fmt.Errorf("osmbr: Node.info: %w", e)
-						return 0, 0, 0, false
-					}
-					err = decodeInfo(infoData, info)
-				} else {
-					nodeMsg.Skip()
+				if e := decodeOptionalInfo(&nodeMsg, info, "Node"); e != nil {
+					ns.err = e
+					return 0, 0, 0, false
 				}
 			case 8: // lat (sint64)
 				lat, err = nodeMsg.Sint64()

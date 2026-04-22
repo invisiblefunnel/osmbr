@@ -3,6 +3,7 @@ package osmbr
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 
@@ -53,11 +54,11 @@ func (br *BlockReader) Next() bool {
 	br.offset = br.pos
 
 	_, err := io.ReadFull(br.r, br.lenBuf[:])
-	if err == io.EOF || err == io.ErrUnexpectedEOF {
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 		return false
 	}
 	if err != nil {
-		br.err = err
+		br.err = fmt.Errorf("osmbr: reading BlobHeader length: %w", err)
 		return false
 	}
 	br.pos += 4
@@ -74,7 +75,7 @@ func (br *BlockReader) Next() bool {
 		br.headerBuf = br.headerBuf[:headerLen]
 	}
 	if _, err = io.ReadFull(br.r, br.headerBuf); err != nil {
-		br.err = err
+		br.err = fmt.Errorf("osmbr: reading BlobHeader: %w", err)
 		return false
 	}
 	br.pos += int64(headerLen)
@@ -129,7 +130,7 @@ func (br *BlockReader) Next() bool {
 		br.blobBuf = br.blobBuf[:dataSize]
 	}
 	if _, err = io.ReadFull(br.r, br.blobBuf); err != nil {
-		br.err = err
+		br.err = fmt.Errorf("osmbr: reading Blob: %w", err)
 		return false
 	}
 	br.pos += dataSize

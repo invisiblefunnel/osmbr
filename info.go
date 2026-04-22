@@ -1,6 +1,10 @@
 package osmbr
 
-import "github.com/paulmach/protoscan"
+import (
+	"fmt"
+
+	"github.com/paulmach/protoscan"
+)
 
 // InfoBuf holds optional per-entity metadata decoded from an Info message.
 // Pass a non-nil *InfoBuf to WayScanner.Next, RelationScanner.Next, or
@@ -28,6 +32,24 @@ type DenseInfoBuf struct {
 	UIDs       []int32  // delta-decoded
 	UserSIDs   []uint32 // indices into the block's string table
 	Visibles   []bool
+}
+
+// decodeOptionalInfo decodes the current field of msg as an Info submessage
+// into *info. If info is nil, the field is skipped. ctx is the enclosing
+// entity name used for error messages ("Node", "Way", "Relation").
+func decodeOptionalInfo(msg *protoscan.Message, info *InfoBuf, ctx string) error {
+	if info == nil {
+		msg.Skip()
+		return nil
+	}
+	data, err := msg.MessageData()
+	if err != nil {
+		return fmt.Errorf("osmbr: %s.info: %w", ctx, err)
+	}
+	if err := decodeInfo(data, info); err != nil {
+		return fmt.Errorf("osmbr: %s.info: %w", ctx, err)
+	}
+	return nil
 }
 
 // decodeInfo decodes a serialized Info message into info.
