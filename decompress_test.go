@@ -100,15 +100,15 @@ func TestDecompressorAcceptsRawBlob(t *testing.T) {
 }
 
 // zlibCompress returns zlib-encoded bytes of src.
-func zlibCompress(t *testing.T, src []byte) []byte {
-	t.Helper()
+func zlibCompress(tb testing.TB, src []byte) []byte {
+	tb.Helper()
 	var buf bytes.Buffer
 	zw := zlib.NewWriter(&buf)
 	if _, err := zw.Write(src); err != nil {
-		t.Fatalf("zlib.Write: %v", err)
+		tb.Fatalf("zlib.Write: %v", err)
 	}
 	if err := zw.Close(); err != nil {
-		t.Fatalf("zlib.Close: %v", err)
+		tb.Fatalf("zlib.Close: %v", err)
 	}
 	return buf.Bytes()
 }
