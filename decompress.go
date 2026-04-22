@@ -120,8 +120,29 @@ func (d *Decompressor) decompress(data []byte, rawSize int) ([]byte, error) {
 		}
 		_, err = io.ReadFull(d.zlibR, d.buf)
 	} else {
-		d.buf = d.buf[:0]
-		d.buf, err = io.ReadAll(d.zlibR)
+		// raw_size absent: read until EOF into the persistent buffer,
+		// growing as needed. Seeding from d.buf lets a warmed-up
+		// Decompressor hit this path at zero allocs (vs. io.ReadAll,
+		// which always allocates a fresh slice).
+		buf := d.buf[:0]
+		if cap(buf) == 0 {
+			buf = make([]byte, 0, 64*1024)
+		}
+		for {
+			if len(buf) == cap(buf) {
+				buf = append(buf, 0)[:len(buf)]
+			}
+			var n int
+			n, err = d.zlibR.Read(buf[len(buf):cap(buf)])
+			buf = buf[:len(buf)+n]
+			if err != nil {
+				if err == io.EOF {
+					err = nil
+				}
+				break
+			}
+		}
+		d.buf = buf
 	}
 
 	if err != nil {
