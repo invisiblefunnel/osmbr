@@ -214,11 +214,13 @@ func BenchmarkBlockReaderNext(b *testing.B) {
 		blobBytes = 256
 	)
 	input := buildSyntheticFrames(nFrames, blobBytes)
+	rdr := bytes.NewReader(input)
 	b.ReportAllocs()
 	b.SetBytes(int64(len(input)))
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		br := osmbr.NewBlockReader(bytes.NewReader(input))
+		rdr.Reset(input)
+		br := osmbr.NewBlockReader(rdr)
 		for br.Next() {
 			_ = br.Blob()
 		}
@@ -512,11 +514,13 @@ func BenchmarkRelationScanner(b *testing.B) {
 // B1: BlockReader walk — isolates framing + I/O buffering cost.
 func BenchmarkReadAllBlocks(b *testing.B) {
 	sets := loadTestPBFSets(b)
+	rdr := bytes.NewReader(sets.file)
 	b.ReportAllocs()
 	b.SetBytes(int64(len(sets.file)))
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		br := osmbr.NewBlockReader(bytes.NewReader(sets.file))
+		rdr.Reset(sets.file)
+		br := osmbr.NewBlockReader(rdr)
 		for br.Next() {
 			_ = br.Type()
 			_ = br.Blob()
@@ -599,12 +603,16 @@ func BenchmarkIterateAllGroups(b *testing.B) {
 	}
 }
 
-// fullPipelineBufs holds all reusable buffers for the full-pipeline
-// benchmarks. Lifting them out of the timed loop matches how real consumers
+// fullPipelineBufs holds all reusable state for the full-pipeline
+// benchmarks. Lifting it out of the timed loop matches how real consumers
 // use the library (one buffer set per worker, reused across blocks — see
 // examples/count) and ensures the benchmark measures the steady-state hot
-// path rather than per-iteration buffer growth.
+// path rather than per-iteration buffer growth. The *bytes.Reader is held
+// here too so we never allocate a fresh one per iteration; production
+// callers typically pass an already-allocated *os.File, so counting a
+// reader alloc per file-read would misrepresent real-world cost.
 type fullPipelineBufs struct {
+	rdr   *bytes.Reader
 	dec   osmbr.Decompressor
 	pb    osmbr.PrimitiveBlock
 	dnBuf osmbr.DenseNodesBuf
@@ -655,7 +663,12 @@ func runFullPipeline(b *testing.B, file []byte, bufs *fullPipelineBufs, withInfo
 		ip = &bufs.iBuf
 		diPtr = &bufs.diBuf
 	}
-	br := osmbr.NewBlockReader(bytes.NewReader(file))
+	if bufs.rdr == nil {
+		bufs.rdr = bytes.NewReader(file)
+	} else {
+		bufs.rdr.Reset(file)
+	}
+	br := osmbr.NewBlockReader(bufs.rdr)
 	for br.Next() {
 		if br.Type() != "OSMData" {
 			continue
