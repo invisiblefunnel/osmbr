@@ -5,7 +5,7 @@ A low-level Go library for reading OpenStreetMap [PBF files](https://wiki.openst
 ## Design
 
 - **Caller-managed buffers** — Allocate buffer structs once and reuse them across blocks. After warm-up, the hot path makes zero heap allocations.
-- **Scanner pattern** — Standard `for scanner.Next() { ... }` idiom with sticky errors.
+- **Scanner-style APIs** — Sequential reads with sticky errors checked after iteration.
 - **Raw values** — Returns raw integers for coordinates and string-table indices for tags. The caller applies granularity/offset conversion.
 - **No domain types** — There are no `Node`, `Way`, or `Relation` structs. The caller reads fields from buffer structs and builds whatever representation it needs.
 
@@ -99,7 +99,52 @@ The reading pipeline flows top-down:
 
 ### BlockReader
 
-`NewBlockReader(r io.Reader)` reads PBF file blocks sequentially. Call `Next()` to advance, `Type()` for the block type (`"OSMHeader"` or `"OSMData"`), and `Blob()` for the raw Blob protobuf bytes. Use a `Decompressor` to decompress them.
+`NewBlockReader(r io.Reader)` reads PBF file blocks sequentially. Call `Next()` to advance, then `Type()` for the block type (`"OSMHeader"` or `"OSMData"`) and `Blob()` for the raw Blob protobuf bytes. `Blob()` points into the reader's own storage and is invalidated by the next read. Use a `Decompressor` to decompress it.
+
+The zero value is ready to use after `Reset(r)`, so a `BlockReader` can live inside a struct you already own:
+
+```go
+type worker struct {
+    br  osmbr.BlockReader
+    dec osmbr.Decompressor
+}
+
+func (w *worker) run(r io.Reader) {
+    w.br.Reset(r)
+    for w.br.Next() {
+        // ...
+    }
+}
+```
+
+`Reset` also lets one reader walk many files without reallocating.
+
+#### Handing blocks to other goroutines
+
+When a blob must outlive the next read — a producer feeding worker goroutines, say — use `NextInto(dst []byte) ([]byte, bool)` instead. It reads directly into caller-owned storage, allocating a larger slice only when `cap(dst)` is too small, so the returned slice may not share storage with `dst`; retain the returned one. On EOF or error it returns `dst[:0]`, so a pooled buffer is never lost.
+
+```go
+var pool sync.Pool
+br := osmbr.NewBlockReader(f)
+for {
+    buf, _ := pool.Get().([]byte)
+    blob, ok := br.NextInto(buf)
+    if !ok {
+        pool.Put(blob) // dst[:0] — nothing lost
+        break
+    }
+    if br.Type() != "OSMData" {
+        pool.Put(blob[:0])
+        continue
+    }
+    jobs <- blob // worker returns blob[:0] to pool when done
+}
+if err := br.Err(); err != nil {
+    log.Fatal(err)
+}
+```
+
+See `examples/count` for the full producer/worker pattern.
 
 ### Header
 

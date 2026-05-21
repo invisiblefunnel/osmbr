@@ -60,48 +60,49 @@ func main() {
 				rBuf  osmbr.RelationBuf
 			)
 			for blob := range jobs {
-				var r result
-				data, err := dec.Decompress(blob)
-				bufPool.Put(blob[:0])
-				if err != nil {
-					fmt.Fprintln(os.Stderr, err)
-					results <- r
-					continue
-				}
-				if err := pb.DecodeFrom(data); err != nil {
-					fmt.Fprintln(os.Stderr, err)
-					results <- r
-					continue
-				}
-				gs := pb.Groups()
-				for gs.Next() {
-					switch gs.Type() {
-					case osmbr.GroupTypeDense:
-						if err := gs.DecodeDenseNodes(&dnBuf, nil); err != nil {
-							fmt.Fprintln(os.Stderr, err)
-							continue
-						}
-						r.nodes += int64(len(dnBuf.IDs))
-					case osmbr.GroupTypeNodes:
-						ns := gs.NodeScanner()
-						for _, _, _, ok := ns.Next(&nBuf, nil); ok; _, _, _, ok = ns.Next(&nBuf, nil) {
-							r.nodes++
-						}
-					case osmbr.GroupTypeWays:
-						ws := gs.WayScanner()
-						for _, ok := ws.Next(&wBuf, nil); ok; _, ok = ws.Next(&wBuf, nil) {
-							r.ways++
-						}
-					case osmbr.GroupTypeRelations:
-						rs := gs.RelationScanner()
-						for _, ok := rs.Next(&rBuf, nil); ok; _, ok = rs.Next(&rBuf, nil) {
-							r.relations++
+				r := func() result {
+					var r result
+					data, err := dec.Decompress(blob)
+					if err != nil {
+						fmt.Fprintln(os.Stderr, err)
+						return r
+					}
+					if err := pb.DecodeFrom(data); err != nil {
+						fmt.Fprintln(os.Stderr, err)
+						return r
+					}
+					gs := pb.Groups()
+					for gs.Next() {
+						switch gs.Type() {
+						case osmbr.GroupTypeDense:
+							if err := gs.DecodeDenseNodes(&dnBuf, nil); err != nil {
+								fmt.Fprintln(os.Stderr, err)
+								continue
+							}
+							r.nodes += int64(len(dnBuf.IDs))
+						case osmbr.GroupTypeNodes:
+							ns := gs.NodeScanner()
+							for _, _, _, ok := ns.Next(&nBuf, nil); ok; _, _, _, ok = ns.Next(&nBuf, nil) {
+								r.nodes++
+							}
+						case osmbr.GroupTypeWays:
+							ws := gs.WayScanner()
+							for _, ok := ws.Next(&wBuf, nil); ok; _, ok = ws.Next(&wBuf, nil) {
+								r.ways++
+							}
+						case osmbr.GroupTypeRelations:
+							rs := gs.RelationScanner()
+							for _, ok := rs.Next(&rBuf, nil); ok; _, ok = rs.Next(&rBuf, nil) {
+								r.relations++
+							}
 						}
 					}
-				}
-				if err := gs.Err(); err != nil {
-					fmt.Fprintln(os.Stderr, err)
-				}
+					if err := gs.Err(); err != nil {
+						fmt.Fprintln(os.Stderr, err)
+					}
+					return r
+				}()
+				bufPool.Put(blob[:0])
 				results <- r
 			}
 		}()
@@ -112,22 +113,24 @@ func main() {
 		close(results)
 	}()
 
-	// Producer: read raw blob bytes (I/O only, no decompression),
-	// copy into pooled buffers, send to workers.
+	// Producer: read raw blob bytes directly into pooled buffers
+	// (I/O only, no decompression), then send OSMData blobs to workers.
 	var readErr error
 	go func() {
 		br := osmbr.NewBlockReader(f)
-		for br.Next() {
+		for {
+			buf, _ := bufPool.Get().([]byte)
+			blob, ok := br.NextInto(buf)
+			if !ok {
+				bufPool.Put(buf[:0])
+				break
+			}
 			if br.Type() != "OSMData" {
+				bufPool.Put(blob[:0])
 				continue
 			}
-			src := br.Blob()
 			blocks.Add(1)
-
-			buf, _ := bufPool.Get().([]byte)
-			buf = append(buf, src...)
-
-			jobs <- buf
+			jobs <- blob
 		}
 		readErr = br.Err()
 		close(jobs)

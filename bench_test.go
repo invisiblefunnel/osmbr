@@ -34,6 +34,7 @@ type testPBFSets struct {
 var (
 	pbfSetsOnce sync.Once
 	pbfSets     *testPBFSets
+	blobSink    byte
 )
 
 func loadTestPBFSets(tb testing.TB) *testPBFSets {
@@ -46,9 +47,9 @@ func loadTestPBFSets(tb testing.TB) *testPBFSets {
 		s := &testPBFSets{file: file}
 		br := osmbr.NewBlockReader(bytes.NewReader(file))
 		var dec osmbr.Decompressor
-		for br.Next() {
-			blob := append([]byte(nil), br.Blob()...)
-			data, err := dec.Decompress(br.Blob())
+		for blob, ok := br.NextInto(nil); ok; blob, ok = br.NextInto(blob[:0]) {
+			blobCopy := append([]byte(nil), blob...)
+			data, err := dec.Decompress(blob)
 			if err != nil {
 				tb.Fatalf("setup Decompress: %v", err)
 			}
@@ -57,7 +58,7 @@ func loadTestPBFSets(tb testing.TB) *testPBFSets {
 				s.headerBlock = body
 				continue
 			}
-			s.dataBlobs = append(s.dataBlobs, blob)
+			s.dataBlobs = append(s.dataBlobs, blobCopy)
 			s.dataBlocks = append(s.dataBlocks, body)
 		}
 		if err := br.Err(); err != nil {
@@ -185,7 +186,7 @@ func buildNodesGroup(nNodes int) []byte {
 
 // buildSyntheticFrames returns a BlockReader input containing nFrames
 // OSMData frames, each with a small raw-blob payload. Used by
-// BenchmarkBlockReaderNext to measure framing cost without disk I/O.
+// BenchmarkBlockReaderNextInto to measure framing cost without disk I/O.
 func buildSyntheticFrames(nFrames, blobBytes int) []byte {
 	blob := pbLenDelim(1, bytes.Repeat([]byte{0xAB}, blobBytes))
 	frame := pbfFrame("OSMData", blob)
@@ -207,8 +208,8 @@ func buildStringTable(n int) [][]byte {
 
 // --- Tier A: micro-benchmarks ---
 
-// A1: BlockReader.Next framing cost.
-func BenchmarkBlockReaderNext(b *testing.B) {
+// A1: BlockReader.NextInto framing cost.
+func BenchmarkBlockReaderNextInto(b *testing.B) {
 	const (
 		nFrames   = 100
 		blobBytes = 256
@@ -221,8 +222,8 @@ func BenchmarkBlockReaderNext(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		rdr.Reset(input)
 		br := osmbr.NewBlockReader(rdr)
-		for br.Next() {
-			_ = br.Blob()
+		for blob, ok := br.NextInto(nil); ok; blob, ok = br.NextInto(blob[:0]) {
+			_ = blob
 		}
 		if err := br.Err(); err != nil {
 			b.Fatal(err)
@@ -512,18 +513,44 @@ func BenchmarkRelationScanner(b *testing.B) {
 // --- Tier B: end-to-end benchmarks over bundled testdata ---
 
 // B1: BlockReader walk — isolates framing + I/O buffering cost.
+// Mirrors a consumer that allocates the blob buffer once and walks many
+// files with fresh BlockReaders (cf. ReadAllBlocksReset which also reuses
+// the BlockReader via Reset).
 func BenchmarkReadAllBlocks(b *testing.B) {
 	sets := loadTestPBFSets(b)
 	rdr := bytes.NewReader(sets.file)
+	var blob []byte
+	// Warm up: grow blob to the largest block size so the timed loop
+	// measures steady state.
+	rdr.Reset(sets.file)
+	{
+		br := osmbr.NewBlockReader(rdr)
+		for {
+			next, ok := br.NextInto(blob[:0])
+			if !ok {
+				break
+			}
+			blob = next
+			_ = br.Type()
+		}
+		if err := br.Err(); err != nil {
+			b.Fatal(err)
+		}
+	}
 	b.ReportAllocs()
 	b.SetBytes(int64(len(sets.file)))
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		rdr.Reset(sets.file)
 		br := osmbr.NewBlockReader(rdr)
-		for br.Next() {
+		for {
+			next, ok := br.NextInto(blob[:0])
+			if !ok {
+				break
+			}
+			blob = next
 			_ = br.Type()
-			_ = br.Blob()
+			_ = blob
 		}
 		if err := br.Err(); err != nil {
 			b.Fatal(err)
@@ -538,11 +565,18 @@ func BenchmarkReadAllBlocksReset(b *testing.B) {
 	sets := loadTestPBFSets(b)
 	rdr := bytes.NewReader(sets.file)
 	br := osmbr.NewBlockReader(rdr)
-	// Warm up: grow blobBuf to the largest block size so the timed loop
-	// measures steady state.
-	for br.Next() {
+	var blob []byte
+	// Warm up: grow the caller-owned blob buffer to the largest block size so
+	// the timed loop measures steady state.
+	for {
+		var ok bool
+		next, ok := br.NextInto(blob[:0])
+		if !ok {
+			break
+		}
+		blob = next
 		_ = br.Type()
-		_ = br.Blob()
+		_ = blob
 	}
 	if err := br.Err(); err != nil {
 		b.Fatal(err)
@@ -553,14 +587,147 @@ func BenchmarkReadAllBlocksReset(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		rdr.Reset(sets.file)
 		br.Reset(rdr)
-		for br.Next() {
+		for {
+			var ok bool
+			next, ok := br.NextInto(blob[:0])
+			if !ok {
+				break
+			}
+			blob = next
 			_ = br.Type()
-			_ = br.Blob()
+			_ = blob
 		}
 		if err := br.Err(); err != nil {
 			b.Fatal(err)
 		}
 	}
+}
+
+type dataBlobReadBufs struct {
+	rdr     *bytes.Reader
+	br      *osmbr.BlockReader
+	readBuf []byte
+	buf     []byte
+}
+
+func (bufs *dataBlobReadBufs) resetBlockReader(file []byte) *osmbr.BlockReader {
+	if bufs.rdr == nil {
+		bufs.rdr = bytes.NewReader(file)
+	} else {
+		bufs.rdr.Reset(file)
+	}
+	if bufs.br == nil {
+		bufs.br = osmbr.NewBlockReader(bufs.rdr)
+	} else {
+		bufs.br.Reset(bufs.rdr)
+	}
+	return bufs.br
+}
+
+// B1c: OSMData producer pattern with an explicit copy from read storage into
+// caller-owned storage.
+func BenchmarkReadDataBlobsCopy(b *testing.B) {
+	sets := loadTestPBFSets(b)
+	var bufs dataBlobReadBufs
+	count, _ := readDataBlobsCopy(b, sets.file, &bufs) // warm up
+	if count != len(sets.dataBlobs) {
+		b.Fatalf("read %d OSMData blobs, want %d", count, len(sets.dataBlobs))
+	}
+	b.ReportAllocs()
+	b.SetBytes(int64(len(sets.file)))
+	b.ResetTimer()
+	var sink byte
+	for i := 0; i < b.N; i++ {
+		var checksum byte
+		count, checksum = readDataBlobsCopy(b, sets.file, &bufs)
+		if count != len(sets.dataBlobs) {
+			b.Fatalf("read %d OSMData blobs, want %d", count, len(sets.dataBlobs))
+		}
+		sink ^= checksum
+	}
+	blobSink = sink
+}
+
+func readDataBlobsCopy(tb testing.TB, file []byte, bufs *dataBlobReadBufs) (int, byte) {
+	tb.Helper()
+	br := bufs.resetBlockReader(file)
+	var (
+		count    int
+		checksum byte
+	)
+	for {
+		var ok bool
+		blob, ok := br.NextInto(bufs.readBuf[:0])
+		if !ok {
+			break
+		}
+		bufs.readBuf = blob
+		if br.Type() != "OSMData" {
+			continue
+		}
+		bufs.buf = append(bufs.buf[:0], bufs.readBuf...)
+		count++
+		if len(bufs.buf) > 0 {
+			checksum ^= bufs.buf[0]
+		}
+	}
+	if err := br.Err(); err != nil {
+		tb.Fatal(err)
+	}
+	return count, checksum
+}
+
+// B1d: OSMData producer pattern using NextInto to read directly into
+// caller-owned storage and avoid the producer-side Blob append copy.
+func BenchmarkReadDataBlobsInto(b *testing.B) {
+	sets := loadTestPBFSets(b)
+	var bufs dataBlobReadBufs
+	count, _ := readDataBlobsInto(b, sets.file, &bufs) // warm up
+	if count != len(sets.dataBlobs) {
+		b.Fatalf("read %d OSMData blobs, want %d", count, len(sets.dataBlobs))
+	}
+	b.ReportAllocs()
+	b.SetBytes(int64(len(sets.file)))
+	b.ResetTimer()
+	var sink byte
+	for i := 0; i < b.N; i++ {
+		var checksum byte
+		count, checksum = readDataBlobsInto(b, sets.file, &bufs)
+		if count != len(sets.dataBlobs) {
+			b.Fatalf("read %d OSMData blobs, want %d", count, len(sets.dataBlobs))
+		}
+		sink ^= checksum
+	}
+	blobSink = sink
+}
+
+func readDataBlobsInto(tb testing.TB, file []byte, bufs *dataBlobReadBufs) (int, byte) {
+	tb.Helper()
+	br := bufs.resetBlockReader(file)
+	buf := bufs.buf[:0]
+	var (
+		count    int
+		checksum byte
+	)
+	for {
+		blob, ok := br.NextInto(buf)
+		if !ok {
+			break
+		}
+		buf = blob[:0]
+		if br.Type() != "OSMData" {
+			continue
+		}
+		count++
+		if len(blob) > 0 {
+			checksum ^= blob[0]
+		}
+	}
+	if err := br.Err(); err != nil {
+		tb.Fatal(err)
+	}
+	bufs.buf = buf
+	return count, checksum
 }
 
 // B2: Decompressor over preloaded OSMData blobs — isolates zlib cost.
@@ -645,6 +812,7 @@ func BenchmarkIterateAllGroups(b *testing.B) {
 // reader alloc per file-read would misrepresent real-world cost.
 type fullPipelineBufs struct {
 	rdr   *bytes.Reader
+	blob  []byte
 	dec   osmbr.Decompressor
 	pb    osmbr.PrimitiveBlock
 	dnBuf osmbr.DenseNodesBuf
@@ -701,11 +869,17 @@ func runFullPipeline(b *testing.B, file []byte, bufs *fullPipelineBufs, withInfo
 		bufs.rdr.Reset(file)
 	}
 	br := osmbr.NewBlockReader(bufs.rdr)
-	for br.Next() {
+	for {
+		var ok bool
+		blob, ok := br.NextInto(bufs.blob[:0])
+		if !ok {
+			break
+		}
+		bufs.blob = blob
 		if br.Type() != "OSMData" {
 			continue
 		}
-		data, err := bufs.dec.Decompress(br.Blob())
+		data, err := bufs.dec.Decompress(bufs.blob)
 		if err != nil {
 			b.Fatal(err)
 		}

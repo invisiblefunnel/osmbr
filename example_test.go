@@ -3,6 +3,7 @@ package osmbr_test
 import (
 	"fmt"
 	"os"
+	"sync"
 
 	"github.com/invisiblefunnel/osmbr"
 )
@@ -27,6 +28,32 @@ func ExampleBlockReader() {
 		fmt.Println(err)
 	}
 	// Output: type=OSMHeader offset=0 len=193
+}
+
+func ExampleBlockReader_NextInto() {
+	f, err := os.Open("testdata/us-virgin-islands-260414.osm.pbf")
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer f.Close()
+
+	// NextInto reads into caller-owned storage, so a blob stays valid after
+	// the reader moves on — what a producer feeding worker goroutines needs.
+	// On EOF or error it hands the buffer back, so nothing leaks out of the
+	// pool.
+	var pool sync.Pool
+	br := osmbr.NewBlockReader(f)
+	buf, _ := pool.Get().([]byte)
+	blob, ok := br.NextInto(buf)
+	if !ok {
+		pool.Put(blob)
+		fmt.Println(br.Err())
+		return
+	}
+	fmt.Printf("type=%s len=%d\n", br.Type(), len(blob))
+	pool.Put(blob[:0])
+	// Output: type=OSMHeader len=193
 }
 
 func ExampleDecompressor() {
