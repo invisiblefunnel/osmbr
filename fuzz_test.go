@@ -21,14 +21,14 @@ func loadFirstDataBlock(tb testing.TB) (raw []byte, dataBlock []byte, headerBlob
 
 	br := osmbr.NewBlockReader(f)
 	var dec osmbr.Decompressor
-	for br.Next() {
+	for blob, ok := br.NextInto(nil); ok; blob, ok = br.NextInto(blob[:0]) {
 		switch br.Type() {
 		case "OSMHeader":
 			if headerBlob == nil {
-				headerBlob = append([]byte(nil), br.Blob()...)
+				headerBlob = append([]byte(nil), blob...)
 			}
 		case "OSMData":
-			raw = append([]byte(nil), br.Blob()...)
+			raw = append([]byte(nil), blob...)
 			out, err := dec.Decompress(raw)
 			if err != nil {
 				tb.Fatalf("seed Decompress: %v", err)
@@ -49,9 +49,14 @@ func FuzzBlockReader(f *testing.F) {
 
 	f.Fuzz(func(t *testing.T, data []byte) {
 		br := osmbr.NewBlockReader(bytes.NewReader(data))
-		for i := 0; br.Next(); i++ {
+		for i, blob := 0, []byte(nil); ; i++ {
+			var ok bool
+			blob, ok = br.NextInto(blob[:0])
+			if !ok {
+				break
+			}
 			_ = br.Type()
-			_ = br.Blob()
+			_ = blob
 			_ = br.Offset()
 			if i > 1024 {
 				t.Fatalf("BlockReader produced > 1024 blocks on %d input bytes", len(data))

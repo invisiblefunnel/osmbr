@@ -42,7 +42,7 @@ func TestReadAll(t *testing.T) {
 
 	var dec osmbr.Decompressor
 	br := osmbr.NewBlockReader(f)
-	for br.Next() {
+	for blob, ok := br.NextInto(nil); ok; blob, ok = br.NextInto(blob[:0]) {
 		switch br.Type() {
 		case "OSMHeader":
 			hasHeader = true
@@ -53,7 +53,7 @@ func TestReadAll(t *testing.T) {
 			continue
 		}
 
-		data, err := dec.Decompress(br.Blob())
+		data, err := dec.Decompress(blob)
 		if err != nil {
 			t.Fatalf("block %d: Decompress: %v", blocks, err)
 		}
@@ -157,7 +157,10 @@ func TestBlockOffsets(t *testing.T) {
 	var blocks []blockInfo
 
 	br := osmbr.NewBlockReader(f)
-	for br.Next() {
+	for {
+		if _, ok := br.NextInto(nil); !ok {
+			break
+		}
 		blocks = append(blocks, blockInfo{offset: br.Offset(), typ: br.Type()})
 	}
 	if err := br.Err(); err != nil {
@@ -176,8 +179,8 @@ func TestBlockOffsets(t *testing.T) {
 			t.Fatalf("block %d: seek to %d: %v", i, b.offset, err)
 		}
 		br2 := osmbr.NewBlockReader(f)
-		if !br2.Next() {
-			t.Fatalf("block %d: Next returned false at offset %d", i, b.offset)
+		if _, ok := br2.NextInto(nil); !ok {
+			t.Fatalf("block %d: NextInto returned false at offset %d", i, b.offset)
 		}
 		if br2.Type() != b.typ {
 			t.Errorf("block %d at offset %d: type = %q, want %q", i, b.offset, br2.Type(), b.typ)
@@ -190,14 +193,15 @@ func TestHeader(t *testing.T) {
 
 	var dec osmbr.Decompressor
 	br := osmbr.NewBlockReader(f)
-	if !br.Next() {
+	blob, ok := br.NextInto(nil)
+	if !ok {
 		t.Fatal("expected a block")
 	}
 	if br.Type() != "OSMHeader" {
 		t.Fatalf("first block type = %q, want OSMHeader", br.Type())
 	}
 
-	data, err := dec.Decompress(br.Blob())
+	data, err := dec.Decompress(blob)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -295,11 +299,11 @@ func TestNodeValues(t *testing.T) {
 	)
 
 	br := osmbr.NewBlockReader(f)
-	for br.Next() {
+	for blob, ok := br.NextInto(nil); ok; blob, ok = br.NextInto(blob[:0]) {
 		if br.Type() != "OSMData" {
 			continue
 		}
-		data, err := dec.Decompress(br.Blob())
+		data, err := dec.Decompress(blob)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -431,11 +435,11 @@ func TestWayValues(t *testing.T) {
 	)
 
 	br := osmbr.NewBlockReader(f)
-	for br.Next() {
+	for blob, ok := br.NextInto(nil); ok; blob, ok = br.NextInto(blob[:0]) {
 		if br.Type() != "OSMData" {
 			continue
 		}
-		data, err := dec.Decompress(br.Blob())
+		data, err := dec.Decompress(blob)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -577,11 +581,11 @@ func TestRelationValues(t *testing.T) {
 	)
 
 	br := osmbr.NewBlockReader(f)
-	for br.Next() {
+	for blob, ok := br.NextInto(nil); ok; blob, ok = br.NextInto(blob[:0]) {
 		if br.Type() != "OSMData" {
 			continue
 		}
-		data, err := dec.Decompress(br.Blob())
+		data, err := dec.Decompress(blob)
 		if err != nil {
 			t.Fatal(err)
 		}
