@@ -1,10 +1,6 @@
 package osmbr
 
-import (
-	"fmt"
-
-	"github.com/paulmach/protoscan"
-)
+import "fmt"
 
 // DenseNodesBuf is caller-managed memory for decoding a DenseNodes group.
 // Allocate once and reuse across blocks to avoid per-block allocations.
@@ -41,7 +37,7 @@ type DenseNodesBuf struct {
 
 // DecodeDenseNodes decodes a DenseNodes PrimitiveGroup into buf.
 // groupData is the raw bytes of a PrimitiveGroup message (from GroupScanner.groupData).
-// Resets all slices to [:0] then appends. Delta-decodes IDs, Lats, Lons in-place.
+// Resets all slices to [:0] then appends. Delta-decodes IDs, Lats, Lons.
 // Pass a non-nil info to also decode DenseInfo metadata; nil skips it.
 func DecodeDenseNodes(groupData []byte, buf *DenseNodesBuf, info *DenseInfoBuf) error {
 	buf.IDs = buf.IDs[:0]
@@ -50,55 +46,54 @@ func DecodeDenseNodes(groupData []byte, buf *DenseNodesBuf, info *DenseInfoBuf) 
 	buf.KeysVals = buf.KeysVals[:0]
 
 	// Scan PrimitiveGroup for field 2 (DenseNodes message)
-	var pgMsg protoscan.Message
-	pgMsg.Reset(groupData)
-	for pgMsg.Next() {
-		if pgMsg.FieldNumber() != 2 {
-			pgMsg.Skip()
+	var pgMsg msg
+	pgMsg.reset(groupData)
+	for pgMsg.next() {
+		if pgMsg.field != 2 {
+			pgMsg.skip()
 			continue
 		}
 
-		denseData, err := pgMsg.MessageData()
-		if err != nil {
-			return fmt.Errorf("osmbr: DenseNodes message: %w", err)
+		denseData := pgMsg.bytes()
+		if pgMsg.err != nil {
+			return fmt.Errorf("osmbr: DenseNodes message: %w", pgMsg.err)
 		}
 
-		var dnMsg protoscan.Message
-		dnMsg.Reset(denseData)
-		for dnMsg.Next() {
-			switch dnMsg.FieldNumber() {
+		var dnMsg msg
+		dnMsg.reset(denseData)
+		for dnMsg.next() {
+			switch dnMsg.field {
 			case 1: // id (packed sint64, delta-encoded)
-				buf.IDs, err = dnMsg.RepeatedSint64(buf.IDs)
+				buf.IDs = dnMsg.repeatedDeltaSint64(buf.IDs)
 			case 8: // lat (packed sint64, delta-encoded)
-				buf.Lats, err = dnMsg.RepeatedSint64(buf.Lats)
+				buf.Lats = dnMsg.repeatedDeltaSint64(buf.Lats)
 			case 9: // lon (packed sint64, delta-encoded)
-				buf.Lons, err = dnMsg.RepeatedSint64(buf.Lons)
+				buf.Lons = dnMsg.repeatedDeltaSint64(buf.Lons)
 			case 10: // keys_vals (packed int32)
-				buf.KeysVals, err = dnMsg.RepeatedInt32(buf.KeysVals)
+				buf.KeysVals = dnMsg.repeatedInt32(buf.KeysVals)
 			case 5: // denseinfo
-				if info != nil {
-					infoData, e := dnMsg.MessageData()
-					if e != nil {
-						return fmt.Errorf("osmbr: DenseInfo message: %w", e)
-					}
-					err = decodeDenseInfo(infoData, info)
-				} else {
-					dnMsg.Skip()
+				if info == nil {
+					dnMsg.skip()
+					break
+				}
+				infoData := dnMsg.bytes()
+				if dnMsg.err != nil {
+					return fmt.Errorf("osmbr: DenseInfo message: %w", dnMsg.err)
+				}
+				if err := decodeDenseInfo(infoData, info); err != nil {
+					return fmt.Errorf("osmbr: DenseInfo: %w", err)
 				}
 			default:
-				dnMsg.Skip()
-			}
-			if err != nil {
-				return fmt.Errorf("osmbr: DenseNodes field %d: %w", dnMsg.FieldNumber(), err)
+				dnMsg.skip()
 			}
 		}
-		if err := dnMsg.Err(); err != nil {
-			return fmt.Errorf("osmbr: DenseNodes: %w", err)
+		if dnMsg.err != nil {
+			return fmt.Errorf("osmbr: DenseNodes: %w", dnMsg.err)
 		}
 		break // only one DenseNodes per PrimitiveGroup
 	}
-	if err := pgMsg.Err(); err != nil {
-		return fmt.Errorf("osmbr: PrimitiveGroup: %w", err)
+	if pgMsg.err != nil {
+		return fmt.Errorf("osmbr: PrimitiveGroup: %w", pgMsg.err)
 	}
 
 	if len(buf.IDs) != len(buf.Lats) || len(buf.IDs) != len(buf.Lons) {
@@ -106,23 +101,5 @@ func DecodeDenseNodes(groupData []byte, buf *DenseNodesBuf, info *DenseInfoBuf) 
 			len(buf.IDs), len(buf.Lats), len(buf.Lons))
 	}
 
-	deltaDecodeInt64(buf.IDs)
-	deltaDecodeInt64(buf.Lats)
-	deltaDecodeInt64(buf.Lons)
-
 	return nil
-}
-
-// deltaDecodeInt64 converts delta-encoded values to absolute values in-place.
-func deltaDecodeInt64(s []int64) {
-	for i := 1; i < len(s); i++ {
-		s[i] += s[i-1]
-	}
-}
-
-// deltaDecodeInt32 converts delta-encoded int32 values to absolute values in-place.
-func deltaDecodeInt32(s []int32) {
-	for i := 1; i < len(s); i++ {
-		s[i] += s[i-1]
-	}
 }

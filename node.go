@@ -1,10 +1,6 @@
 package osmbr
 
-import (
-	"fmt"
-
-	"github.com/paulmach/protoscan"
-)
+import "fmt"
 
 // NodeBuf is caller-managed memory for decoding individual Node entities.
 // Non-dense nodes are rare in practice; most OSM data uses DenseNodes.
@@ -18,7 +14,7 @@ type NodeBuf struct {
 // Obtain one via GroupScanner.NodeScanner. NodeScanner is a value type.
 // Note: in practice, OSM planet files and extracts use DenseNodes exclusively.
 type NodeScanner struct {
-	msg protoscan.Message
+	m   msg
 	err error
 }
 
@@ -31,15 +27,15 @@ type NodeScanner struct {
 //
 // Pass a non-nil info to also decode the Node's Info; nil skips it.
 func (ns *NodeScanner) Next(buf *NodeBuf, info *InfoBuf) (id, lat, lon int64, ok bool) {
-	for ns.msg.Next() {
-		if ns.msg.FieldNumber() != 1 { // repeated Node
-			ns.msg.Skip()
+	for ns.m.next() {
+		if ns.m.field != 1 { // repeated Node
+			ns.m.skip()
 			continue
 		}
 
-		nodeData, err := ns.msg.MessageData()
-		if err != nil {
-			ns.err = fmt.Errorf("osmbr: Node message: %w", err)
+		nodeData := ns.m.bytes()
+		if ns.m.err != nil {
+			ns.err = fmt.Errorf("osmbr: Node message: %w", ns.m.err)
 			return 0, 0, 0, false
 		}
 
@@ -47,43 +43,36 @@ func (ns *NodeScanner) Next(buf *NodeBuf, info *InfoBuf) (id, lat, lon int64, ok
 		buf.Vals = buf.Vals[:0]
 		id, lat, lon = 0, 0, 0
 
-		var nodeMsg protoscan.Message
-		nodeMsg.Reset(nodeData)
-		for nodeMsg.Next() {
-			switch nodeMsg.FieldNumber() {
+		var nodeMsg msg
+		nodeMsg.reset(nodeData)
+		for nodeMsg.next() {
+			switch nodeMsg.field {
 			case 1: // id (sint64)
-				id, err = nodeMsg.Sint64()
+				id = nodeMsg.sint64()
 			case 2: // keys (packed uint32)
-				buf.Keys, err = nodeMsg.RepeatedUint32(buf.Keys)
+				buf.Keys = nodeMsg.repeatedUint32(buf.Keys)
 			case 3: // vals (packed uint32)
-				buf.Vals, err = nodeMsg.RepeatedUint32(buf.Vals)
+				buf.Vals = nodeMsg.repeatedUint32(buf.Vals)
 			case 4: // info
-				if e := decodeOptionalInfo(&nodeMsg, info, "Node"); e != nil {
-					ns.err = e
-					return 0, 0, 0, false
-				}
+				decodeOptionalInfo(&nodeMsg, info, "Node")
 			case 8: // lat (sint64)
-				lat, err = nodeMsg.Sint64()
+				lat = nodeMsg.sint64()
 			case 9: // lon (sint64)
-				lon, err = nodeMsg.Sint64()
+				lon = nodeMsg.sint64()
 			default:
-				nodeMsg.Skip()
-			}
-			if err != nil {
-				ns.err = fmt.Errorf("osmbr: Node field %d: %w", nodeMsg.FieldNumber(), err)
-				return 0, 0, 0, false
+				nodeMsg.skip()
 			}
 		}
-		if err = nodeMsg.Err(); err != nil {
-			ns.err = fmt.Errorf("osmbr: Node: %w", err)
+		if nodeMsg.err != nil {
+			ns.err = fmt.Errorf("osmbr: Node: %w", nodeMsg.err)
 			return 0, 0, 0, false
 		}
 
 		return id, lat, lon, true
 	}
 
-	if err := ns.msg.Err(); err != nil {
-		ns.err = fmt.Errorf("osmbr: PrimitiveGroup: %w", err)
+	if ns.m.err != nil {
+		ns.err = fmt.Errorf("osmbr: PrimitiveGroup: %w", ns.m.err)
 	}
 	return 0, 0, 0, false
 }

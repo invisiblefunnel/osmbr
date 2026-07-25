@@ -1,10 +1,6 @@
 package osmbr
 
-import (
-	"fmt"
-
-	"github.com/paulmach/protoscan"
-)
+import "fmt"
 
 // Member type constants for Relation members.
 const (
@@ -28,7 +24,7 @@ type RelationBuf struct {
 // RelationScanner iterates over Relation messages in a PrimitiveGroup.
 // Obtain one via GroupScanner.RelationScanner. RelationScanner is a value type.
 type RelationScanner struct {
-	msg protoscan.Message
+	m   msg
 	err error
 }
 
@@ -37,15 +33,15 @@ type RelationScanner struct {
 // Returns (0, false) when no more relations remain.
 // Pass a non-nil info to also decode the Relation's Info; nil skips it.
 func (rs *RelationScanner) Next(buf *RelationBuf, info *InfoBuf) (id int64, ok bool) {
-	for rs.msg.Next() {
-		if rs.msg.FieldNumber() != 4 { // repeated Relation
-			rs.msg.Skip()
+	for rs.m.next() {
+		if rs.m.field != 4 { // repeated Relation
+			rs.m.skip()
 			continue
 		}
 
-		relData, err := rs.msg.MessageData()
-		if err != nil {
-			rs.err = fmt.Errorf("osmbr: Relation message: %w", err)
+		relData := rs.m.bytes()
+		if rs.m.err != nil {
+			rs.err = fmt.Errorf("osmbr: Relation message: %w", rs.m.err)
 			return 0, false
 		}
 
@@ -55,46 +51,38 @@ func (rs *RelationScanner) Next(buf *RelationBuf, info *InfoBuf) (id int64, ok b
 		buf.MemIDs = buf.MemIDs[:0]
 		buf.Types = buf.Types[:0]
 
-		var relMsg protoscan.Message
-		relMsg.Reset(relData)
-		for relMsg.Next() {
-			switch relMsg.FieldNumber() {
+		var relMsg msg
+		relMsg.reset(relData)
+		for relMsg.next() {
+			switch relMsg.field {
 			case 1: // id (int64)
-				id, err = relMsg.Int64()
+				id = relMsg.int64()
 			case 2: // keys (packed uint32)
-				buf.Keys, err = relMsg.RepeatedUint32(buf.Keys)
+				buf.Keys = relMsg.repeatedUint32(buf.Keys)
 			case 3: // vals (packed uint32)
-				buf.Vals, err = relMsg.RepeatedUint32(buf.Vals)
+				buf.Vals = relMsg.repeatedUint32(buf.Vals)
 			case 4: // info
-				if e := decodeOptionalInfo(&relMsg, info, "Relation"); e != nil {
-					rs.err = e
-					return 0, false
-				}
+				decodeOptionalInfo(&relMsg, info, "Relation")
 			case 8: // roles_sid (packed int32)
-				buf.RolesSID, err = relMsg.RepeatedInt32(buf.RolesSID)
+				buf.RolesSID = relMsg.repeatedInt32(buf.RolesSID)
 			case 9: // memids (packed sint64, delta-encoded)
-				buf.MemIDs, err = relMsg.RepeatedSint64(buf.MemIDs)
+				buf.MemIDs = relMsg.repeatedDeltaSint64(buf.MemIDs)
 			case 10: // types (packed int32)
-				buf.Types, err = relMsg.RepeatedInt32(buf.Types)
+				buf.Types = relMsg.repeatedInt32(buf.Types)
 			default:
-				relMsg.Skip()
-			}
-			if err != nil {
-				rs.err = fmt.Errorf("osmbr: Relation field %d: %w", relMsg.FieldNumber(), err)
-				return 0, false
+				relMsg.skip()
 			}
 		}
-		if err = relMsg.Err(); err != nil {
-			rs.err = fmt.Errorf("osmbr: Relation: %w", err)
+		if relMsg.err != nil {
+			rs.err = fmt.Errorf("osmbr: Relation: %w", relMsg.err)
 			return 0, false
 		}
 
-		deltaDecodeInt64(buf.MemIDs)
 		return id, true
 	}
 
-	if err := rs.msg.Err(); err != nil {
-		rs.err = fmt.Errorf("osmbr: PrimitiveGroup: %w", err)
+	if rs.m.err != nil {
+		rs.err = fmt.Errorf("osmbr: PrimitiveGroup: %w", rs.m.err)
 	}
 	return 0, false
 }

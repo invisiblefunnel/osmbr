@@ -1,10 +1,6 @@
 package osmbr
 
-import (
-	"fmt"
-
-	"github.com/paulmach/protoscan"
-)
+import "fmt"
 
 // Header holds the decoded contents of an OSMHeader block.
 type Header struct {
@@ -42,14 +38,14 @@ type HeaderBBox struct {
 // DecodeHeader decodes a decompressed OSMHeader block.
 func DecodeHeader(data []byte) (Header, error) {
 	var h Header
-	var msg protoscan.Message
-	msg.Reset(data)
-	for msg.Next() {
-		switch msg.FieldNumber() {
+	var m msg
+	m.reset(data)
+	for m.next() {
+		switch m.field {
 		case 1: // bbox
-			bboxData, err := msg.MessageData()
-			if err != nil {
-				return h, fmt.Errorf("osmbr: Header.bbox: %w", err)
+			bboxData := m.bytes()
+			if m.err != nil {
+				return h, fmt.Errorf("osmbr: Header.bbox: %w", m.err)
 			}
 			bb, err := decodeHeaderBBox(bboxData)
 			if err != nil {
@@ -57,81 +53,71 @@ func DecodeHeader(data []byte) (Header, error) {
 			}
 			h.BBox = bb
 		case 4: // required_features
-			b, err := msg.Bytes()
-			if err != nil {
-				return h, fmt.Errorf("osmbr: Header.required_features: %w", err)
+			b := m.bytes()
+			if m.err != nil {
+				return h, fmt.Errorf("osmbr: Header.required_features: %w", m.err)
 			}
 			h.RequiredFeatures = append(h.RequiredFeatures, string(b))
 		case 5: // optional_features
-			b, err := msg.Bytes()
-			if err != nil {
-				return h, fmt.Errorf("osmbr: Header.optional_features: %w", err)
+			b := m.bytes()
+			if m.err != nil {
+				return h, fmt.Errorf("osmbr: Header.optional_features: %w", m.err)
 			}
 			h.OptionalFeatures = append(h.OptionalFeatures, string(b))
 		case 16: // writingprogram
-			b, err := msg.Bytes()
-			if err != nil {
-				return h, fmt.Errorf("osmbr: Header.writingprogram: %w", err)
+			b := m.bytes()
+			if m.err != nil {
+				return h, fmt.Errorf("osmbr: Header.writingprogram: %w", m.err)
 			}
 			h.WritingProgram = string(b)
 		case 17: // source
-			b, err := msg.Bytes()
-			if err != nil {
-				return h, fmt.Errorf("osmbr: Header.source: %w", err)
+			b := m.bytes()
+			if m.err != nil {
+				return h, fmt.Errorf("osmbr: Header.source: %w", m.err)
 			}
 			h.Source = string(b)
 		case 32: // osmosis_replication_timestamp
-			v, err := msg.Int64()
-			if err != nil {
-				return h, fmt.Errorf("osmbr: Header.osmosis_replication_timestamp: %w", err)
-			}
+			v := m.int64()
 			h.ReplicationTimestamp = v
 		case 33: // osmosis_replication_sequence_number
-			v, err := msg.Int64()
-			if err != nil {
-				return h, fmt.Errorf("osmbr: Header.osmosis_replication_sequence_number: %w", err)
-			}
+			v := m.int64()
 			h.ReplicationSequenceNumber = v
 		case 34: // osmosis_replication_base_url
-			b, err := msg.Bytes()
-			if err != nil {
-				return h, fmt.Errorf("osmbr: Header.osmosis_replication_base_url: %w", err)
+			b := m.bytes()
+			if m.err != nil {
+				return h, fmt.Errorf("osmbr: Header.osmosis_replication_base_url: %w", m.err)
 			}
 			h.ReplicationBaseURL = string(b)
 		default:
-			msg.Skip()
+			m.skip()
 		}
 	}
-	if err := msg.Err(); err != nil {
-		return h, fmt.Errorf("osmbr: Header: %w", err)
+	if m.err != nil {
+		return h, fmt.Errorf("osmbr: Header: %w", m.err)
 	}
 	return h, nil
 }
 
 func decodeHeaderBBox(data []byte) (HeaderBBox, error) {
 	var bb HeaderBBox
-	var msg protoscan.Message
-	msg.Reset(data)
-	for msg.Next() {
-		var err error
-		switch msg.FieldNumber() {
+	var m msg
+	m.reset(data)
+	for m.next() {
+		switch m.field {
 		case 1:
-			bb.Left, err = msg.Sint64()
+			bb.Left = m.sint64()
 		case 2:
-			bb.Right, err = msg.Sint64()
+			bb.Right = m.sint64()
 		case 3:
-			bb.Top, err = msg.Sint64()
+			bb.Top = m.sint64()
 		case 4:
-			bb.Bottom, err = msg.Sint64()
+			bb.Bottom = m.sint64()
 		default:
-			msg.Skip()
-		}
-		if err != nil {
-			return bb, fmt.Errorf("osmbr: HeaderBBox field %d: %w", msg.FieldNumber(), err)
+			m.skip()
 		}
 	}
-	if err := msg.Err(); err != nil {
-		return bb, fmt.Errorf("osmbr: HeaderBBox: %w", err)
+	if m.err != nil {
+		return bb, fmt.Errorf("osmbr: HeaderBBox: %w", m.err)
 	}
 	return bb, nil
 }

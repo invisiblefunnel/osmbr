@@ -6,7 +6,6 @@ import (
 	"io"
 
 	"github.com/klauspost/compress/zlib"
-	"github.com/paulmach/protoscan"
 )
 
 // Decompressor parses and decompresses raw PBF Blob messages.
@@ -30,33 +29,22 @@ func (d *Decompressor) Decompress(blob []byte) ([]byte, error) {
 		rawSize  int
 		hasRaw   bool
 		hasZlib  bool
-		msg      protoscan.Message
+		m        msg
 	)
-	msg.Reset(blob)
-	for msg.Next() {
-		switch msg.FieldNumber() {
+	m.reset(blob)
+	for m.next() {
+		switch m.field {
 		case 1: // raw
-			b, err := msg.Bytes()
-			if err != nil {
-				return nil, fmt.Errorf("osmbr: Blob.raw: %w", err)
-			}
-			rawData = b
+			rawData = m.bytes()
 			hasRaw = true
 		case 2: // raw_size
-			n, err := msg.Int32()
-			if err != nil {
-				return nil, fmt.Errorf("osmbr: Blob.raw_size: %w", err)
-			}
-			if n < 0 || n > maxBlobSize {
+			n := m.int32()
+			if m.err == nil && (n < 0 || n > maxBlobSize) {
 				return nil, fmt.Errorf("osmbr: invalid Blob.raw_size: %d", n)
 			}
 			rawSize = int(n)
 		case 3: // zlib_data
-			b, err := msg.Bytes()
-			if err != nil {
-				return nil, fmt.Errorf("osmbr: Blob.zlib_data: %w", err)
-			}
-			zlibData = b
+			zlibData = m.bytes()
 			hasZlib = true
 		case 4: // lzma_data
 			return nil, fmt.Errorf("osmbr: unsupported Blob compression: lzma")
@@ -67,11 +55,11 @@ func (d *Decompressor) Decompress(blob []byte) ([]byte, error) {
 		case 7: // zstd_data
 			return nil, fmt.Errorf("osmbr: unsupported Blob compression: zstd")
 		default:
-			msg.Skip()
+			m.skip()
 		}
 	}
-	if err := msg.Err(); err != nil {
-		return nil, fmt.Errorf("osmbr: Blob: %w", err)
+	if m.err != nil {
+		return nil, fmt.Errorf("osmbr: Blob: %w", m.err)
 	}
 
 	switch {

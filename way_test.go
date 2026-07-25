@@ -95,6 +95,32 @@ func TestWayScannerNext(t *testing.T) {
 	}
 }
 
+func TestWayScannerRefsMixedPackedAndUnpacked(t *testing.T) {
+	way := pbVarintField(1, 100)
+	way = append(way, pbPackedSint64(8, []int64{10, 5})...)
+	way = append(way, pbSint64Field(8, -3)...)
+	block := primitiveBlockBytes([][]byte{nil}, pbLenDelim(2, waysGroup(way))...)
+
+	var (
+		pb   osmbr.PrimitiveBlock
+		wBuf osmbr.WayBuf
+	)
+	if err := pb.DecodeFrom(block); err != nil {
+		t.Fatalf("DecodeFrom: %v", err)
+	}
+	gs := pb.Groups()
+	if !gs.Next() {
+		t.Fatalf("Groups.Next: %v", gs.Err())
+	}
+	ws := gs.WayScanner()
+	if _, ok := ws.Next(&wBuf, nil); !ok {
+		t.Fatalf("WayScanner.Next: %v", ws.Err())
+	}
+	if !slices.Equal(wBuf.Refs, []int64{10, 15, 12}) {
+		t.Errorf("Refs = %v, want mixed-field delta decode", wBuf.Refs)
+	}
+}
+
 func TestWayScannerEmptyGroup(t *testing.T) {
 	// PrimitiveGroup with no Way entries.
 	block := primitiveBlockBytes([][]byte{nil}, pbLenDelim(2, pbLenDelim(3, nil))...)

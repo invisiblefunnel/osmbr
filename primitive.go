@@ -1,10 +1,6 @@
 package osmbr
 
-import (
-	"fmt"
-
-	"github.com/paulmach/protoscan"
-)
+import "fmt"
 
 // PrimitiveBlock holds the decoded metadata and string table for an OSMData block.
 // Call DecodeFrom to populate from a Decompressor's output. Call Groups to iterate groups.
@@ -44,63 +40,43 @@ func (pb *PrimitiveBlock) DecodeFrom(data []byte) error {
 	pb.strings = pb.strings[:0]
 	pb.data = data
 
-	var msg protoscan.Message
-	msg.Reset(data)
-	for msg.Next() {
-		switch msg.FieldNumber() {
+	var m msg
+	m.reset(data)
+	for m.next() {
+		switch m.field {
 		case 1: // stringtable
-			stData, err := msg.MessageData()
-			if err != nil {
-				return fmt.Errorf("osmbr: PrimitiveBlock.stringtable: %w", err)
+			stData := m.bytes()
+			if m.err != nil {
+				return fmt.Errorf("osmbr: PrimitiveBlock.stringtable: %w", m.err)
 			}
-			var stMsg protoscan.Message
-			stMsg.Reset(stData)
-			for stMsg.Next() {
-				if stMsg.FieldNumber() == 1 {
-					b, err := stMsg.Bytes()
-					if err != nil {
-						return fmt.Errorf("osmbr: StringTable.s: %w", err)
-					}
-					pb.strings = append(pb.strings, b)
+			var stMsg msg
+			stMsg.reset(stData)
+			for stMsg.next() {
+				if stMsg.field == 1 {
+					pb.strings = append(pb.strings, stMsg.bytes())
 				} else {
-					stMsg.Skip()
+					stMsg.skip()
 				}
 			}
-			if err := stMsg.Err(); err != nil {
-				return fmt.Errorf("osmbr: StringTable: %w", err)
+			if stMsg.err != nil {
+				return fmt.Errorf("osmbr: StringTable: %w", stMsg.err)
 			}
 		case 2: // primitivegroup — deferred; re-scanned by Groups()
-			msg.Skip()
+			m.skip()
 		case 17: // granularity
-			v, err := msg.Int32()
-			if err != nil {
-				return fmt.Errorf("osmbr: PrimitiveBlock.granularity: %w", err)
-			}
-			pb.Granularity = v
+			pb.Granularity = m.int32()
 		case 18: // date_granularity
-			v, err := msg.Int32()
-			if err != nil {
-				return fmt.Errorf("osmbr: PrimitiveBlock.date_granularity: %w", err)
-			}
-			pb.DateGranularity = v
+			pb.DateGranularity = m.int32()
 		case 19: // lat_offset
-			v, err := msg.Int64()
-			if err != nil {
-				return fmt.Errorf("osmbr: PrimitiveBlock.lat_offset: %w", err)
-			}
-			pb.LatOffset = v
+			pb.LatOffset = m.int64()
 		case 20: // lon_offset
-			v, err := msg.Int64()
-			if err != nil {
-				return fmt.Errorf("osmbr: PrimitiveBlock.lon_offset: %w", err)
-			}
-			pb.LonOffset = v
+			pb.LonOffset = m.int64()
 		default:
-			msg.Skip()
+			m.skip()
 		}
 	}
-	if err := msg.Err(); err != nil {
-		return fmt.Errorf("osmbr: PrimitiveBlock: %w", err)
+	if m.err != nil {
+		return fmt.Errorf("osmbr: PrimitiveBlock: %w", m.err)
 	}
 	return nil
 }
@@ -118,6 +94,6 @@ func (pb *PrimitiveBlock) NumStrings() int { return len(pb.strings) }
 // in this block. The scanner re-reads from the original block data.
 func (pb *PrimitiveBlock) Groups() GroupScanner {
 	var gs GroupScanner
-	gs.msg.Reset(pb.data)
+	gs.m.reset(pb.data)
 	return gs
 }
