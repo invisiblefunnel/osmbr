@@ -30,14 +30,35 @@ func TestBlockReaderEmptyInput(t *testing.T) {
 	}
 }
 
+// TestBlockReaderTruncatedHeaderLength covers a file that ends part-way
+// through a block's 4-byte length prefix. That is truncation, not a clean end,
+// and must be reported — otherwise a torn download reads as a complete file.
 func TestBlockReaderTruncatedHeaderLength(t *testing.T) {
-	// Only 2 bytes — not enough for the 4-byte length prefix.
-	br := osmbr.NewBlockReader(bytes.NewReader([]byte{0, 0}))
-	if _, ok := br.NextInto(nil); ok {
-		t.Fatal("NextInto on partial length prefix should return false")
+	for _, n := range []int{1, 2, 3} {
+		br := osmbr.NewBlockReader(bytes.NewReader(make([]byte, n)))
+		if _, ok := br.NextInto(nil); ok {
+			t.Fatalf("%d-byte prefix: NextInto should return false", n)
+		}
+		if err := br.Err(); err == nil {
+			t.Errorf("%d-byte prefix: Err = nil, want a truncation error", n)
+		}
 	}
-	if err := br.Err(); err != nil {
-		t.Errorf("Err on partial length prefix = %v, want nil (clean EOF)", err)
+}
+
+// TestBlockReaderTrailingBytesAfterBlock is the same truncation check one
+// block in: a complete block followed by a partial length prefix.
+func TestBlockReaderTrailingBytesAfterBlock(t *testing.T) {
+	input := append(pbfFrame("OSMData", pbLenDelim(1, []byte("payload"))), 0xde, 0xad)
+
+	br := osmbr.NewBlockReader(bytes.NewReader(input))
+	if !br.Next() {
+		t.Fatalf("first block: Next returned false: %v", br.Err())
+	}
+	if br.Next() {
+		t.Fatal("Next should return false on the trailing bytes")
+	}
+	if err := br.Err(); err == nil {
+		t.Error("Err = nil, want a truncation error for the trailing bytes")
 	}
 }
 
@@ -107,6 +128,60 @@ func TestBlockReaderInvalidDataSize(t *testing.T) {
 				t.Errorf("error %q does not mention datasize", err)
 			}
 		})
+	}
+}
+
+// TestBlockReaderErrorIsSticky covers reading on past a failure. A failed read
+// leaves the stream positioned mid-block, so the next four bytes are payload
+// rather than a length prefix; resuming there would decode garbage as blocks
+// and could overwrite Err with a later, less relevant failure.
+func TestBlockReaderErrorIsSticky(t *testing.T) {
+	// An invalid datasize (0) stops the reader with the stream parked just
+	// after that BlobHeader, where a well-formed frame follows.
+	header := append(pbLenDelim(1, []byte("OSMData")), pbVarintField(3, 0)...)
+	bad := make([]byte, 4, 4+len(header))
+	binary.BigEndian.PutUint32(bad, uint32(len(header)))
+	bad = append(bad, header...)
+	input := append(bad, pbfFrame("OSMData", pbLenDelim(1, []byte("payload")))...)
+
+	br := osmbr.NewBlockReader(bytes.NewReader(input))
+	if br.Next() {
+		t.Fatal("first Next should fail on datasize 0")
+	}
+	first := br.Err()
+	if first == nil {
+		t.Fatal("Err = nil after a failed Next")
+	}
+
+	for i := range 3 {
+		if br.Next() {
+			t.Fatalf("Next %d returned true after an error", i+2)
+		}
+		if blob := br.Blob(); len(blob) != 0 {
+			t.Errorf("Blob = %q after an error, want empty", blob)
+		}
+	}
+	if got := br.Err(); got != first {
+		t.Errorf("Err = %v, want the first error %v", got, first)
+	}
+
+	// NextInto reports the same, and still hands the caller its buffer back.
+	buf := make([]byte, 0, 64)
+	got, ok := br.NextInto(buf)
+	if ok {
+		t.Error("NextInto returned true after an error")
+	}
+	if cap(got) != cap(buf) {
+		t.Errorf("NextInto lost the caller's buffer: cap %d, want %d", cap(got), cap(buf))
+	}
+
+	// Reset clears the error and the reader works again.
+	br.Reset(bytes.NewReader(pbfFrame("OSMData", pbLenDelim(1, []byte("fresh")))))
+	if !br.Next() {
+		t.Fatalf("Next after Reset: %v", br.Err())
+	}
+	if err := br.Err(); err != nil {
+		t.Errorf("Err after Reset = %v, want nil", err)
 	}
 }
 

@@ -101,6 +101,8 @@ The reading pipeline flows top-down:
 
 `NewBlockReader(r io.Reader)` reads PBF file blocks sequentially. Call `Next()` to advance, then `Type()` for the block type (`"OSMHeader"` or `"OSMData"`) and `Blob()` for the raw Blob protobuf bytes. `Blob()` points into the reader's own storage and is invalidated by the next read. Use a `Decompressor` to decompress it.
 
+Errors stop the walk for good: a failed read leaves the stream parked mid-block, where the following bytes are payload rather than a length prefix, so every later `Next()` reports false and `Err()` keeps returning that first failure until you `Reset`.
+
 The zero value is ready to use after `Reset(r)`, so a `BlockReader` can live inside a struct you already own:
 
 ```go
