@@ -5,6 +5,10 @@ import "fmt"
 // InfoBuf holds optional per-entity metadata decoded from an Info message.
 // Pass a non-nil *InfoBuf to WayScanner.Next, RelationScanner.Next, or
 // NodeScanner.Next to populate it; nil skips decoding entirely.
+//
+// Each Next zeroes the buffer before decoding, so one InfoBuf can be reused
+// across a whole file: an entity carrying no Info reads back as the zero
+// value rather than as the previous entity's metadata.
 type InfoBuf struct {
 	Version    int32
 	Timestamp  int64 // milliseconds since Unix epoch
@@ -19,6 +23,13 @@ type InfoBuf struct {
 // message. All slices are grown as needed (capacity preserved across calls).
 // Pass a non-nil *DenseInfoBuf to DecodeDenseNodes to populate; nil skips it.
 //
+// DecodeDenseNodes guarantees every array here is either empty or exactly as
+// long as DenseNodesBuf.IDs, so an array that is non-empty can be indexed by
+// node position without a bounds check of its own. A file that violates this
+// is rejected rather than decoded. An array is empty whenever the group omits
+// that field — including when the group carries no DenseInfo at all, which
+// clears anything a previous group left behind.
+//
 // Delta-decoded fields: Timestamps, Changesets, UIDs.
 // Non-delta fields: Versions, UserSIDs.
 type DenseInfoBuf struct {
@@ -32,8 +43,8 @@ type DenseInfoBuf struct {
 
 // decodeOptionalInfo decodes the current field of m as an Info submessage
 // into *info. If info is nil, the field is skipped. Failures are recorded on
-// m. ctx is the enclosing entity name used for error messages.
-func decodeOptionalInfo(m *msg, info *InfoBuf, ctx string) {
+// m, whose caller wraps them with the enclosing entity name.
+func decodeOptionalInfo(m *msg, info *InfoBuf) {
 	if info == nil {
 		m.skip()
 		return
@@ -43,13 +54,14 @@ func decodeOptionalInfo(m *msg, info *InfoBuf, ctx string) {
 		return
 	}
 	if err := decodeInfo(data, info); err != nil {
-		m.fail(fmt.Errorf("%s.info: %w", ctx, err))
+		m.fail(fmt.Errorf("info: %w", err))
 	}
 }
 
-// decodeInfo decodes a serialized Info message into info.
+// decodeInfo decodes a serialized Info message into info, which the scanner
+// has already zeroed. Every Info field is optional, so an absent one leaves
+// the zero value.
 func decodeInfo(data []byte, info *InfoBuf) error {
-	*info = InfoBuf{}
 	var m msg
 	m.reset(data)
 	for m.next() {
@@ -74,16 +86,20 @@ func decodeInfo(data []byte, info *InfoBuf) error {
 	return m.err
 }
 
-// decodeDenseInfo decodes a serialized DenseInfo message into info.
-// Resets all slices to [:0] then appends. Delta-decodes Timestamps, Changesets, UIDs.
-func decodeDenseInfo(data []byte, info *DenseInfoBuf) error {
+// reset truncates every array, preserving capacity.
+func (info *DenseInfoBuf) reset() {
 	info.Versions = info.Versions[:0]
 	info.Timestamps = info.Timestamps[:0]
 	info.Changesets = info.Changesets[:0]
 	info.UIDs = info.UIDs[:0]
 	info.UserSIDs = info.UserSIDs[:0]
 	info.Visibles = info.Visibles[:0]
+}
 
+// decodeDenseInfo decodes a serialized DenseInfo message into info, appending
+// to arrays that DecodeDenseNodes has already reset. Delta-decodes Timestamps,
+// Changesets, UIDs.
+func decodeDenseInfo(data []byte, info *DenseInfoBuf) error {
 	var m msg
 	m.reset(data)
 	for m.next() {

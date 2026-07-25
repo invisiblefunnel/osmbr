@@ -50,6 +50,11 @@ func (rs *RelationScanner) Next(buf *RelationBuf, info *InfoBuf) (id int64, ok b
 		buf.RolesSID = buf.RolesSID[:0]
 		buf.MemIDs = buf.MemIDs[:0]
 		buf.Types = buf.Types[:0]
+		// See WayScanner.Next: info is optional per entity and must not carry
+		// over from the previous Relation.
+		if info != nil {
+			*info = InfoBuf{}
+		}
 
 		var relMsg msg
 		relMsg.reset(relData)
@@ -62,7 +67,7 @@ func (rs *RelationScanner) Next(buf *RelationBuf, info *InfoBuf) (id int64, ok b
 			case 3: // vals (packed uint32)
 				buf.Vals = relMsg.repeatedUint32(buf.Vals)
 			case 4: // info
-				decodeOptionalInfo(&relMsg, info, "Relation")
+				decodeOptionalInfo(&relMsg, info)
 			case 8: // roles_sid (packed int32)
 				buf.RolesSID = relMsg.repeatedInt32(buf.RolesSID)
 			case 9: // memids (packed sint64, delta-encoded)
