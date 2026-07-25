@@ -178,3 +178,32 @@ func TestDenseInfoBufDeltaDecode(t *testing.T) {
 		t.Errorf("Visibles = %v, want %v", info.Visibles, visibles)
 	}
 }
+
+func TestDenseInfoBufDeltaDecodeMixedPackedAndUnpacked(t *testing.T) {
+	diBody := pbPackedInt32(1, []int32{1, 2, 3})
+	diBody = append(diBody, pbPackedSint64(2, []int64{100, 10})...)
+	diBody = append(diBody, pbSint64Field(2, 20)...)
+	diBody = append(diBody, pbPackedSint64(3, []int64{50, 5})...)
+	diBody = append(diBody, pbSint64Field(3, 5)...)
+	diBody = append(diBody, pbPackedSint32(4, []int32{10, 1})...)
+	diBody = append(diBody, pbSint32Field(4, 2)...)
+
+	group := denseGroupBytes([]int64{1, 0, 0}, []int64{0, 0, 0}, []int64{0, 0, 0}, nil, diBody)
+
+	var (
+		buf  osmbr.DenseNodesBuf
+		info osmbr.DenseInfoBuf
+	)
+	if err := osmbr.DecodeDenseNodes(group, &buf, &info); err != nil {
+		t.Fatalf("DecodeDenseNodes: %v", err)
+	}
+	if !slices.Equal(info.Timestamps, []int64{100, 110, 130}) {
+		t.Errorf("Timestamps = %v, want mixed-field delta decode", info.Timestamps)
+	}
+	if !slices.Equal(info.Changesets, []int64{50, 55, 60}) {
+		t.Errorf("Changesets = %v, want mixed-field delta decode", info.Changesets)
+	}
+	if !slices.Equal(info.UIDs, []int32{10, 11, 13}) {
+		t.Errorf("UIDs = %v, want mixed-field delta decode", info.UIDs)
+	}
+}

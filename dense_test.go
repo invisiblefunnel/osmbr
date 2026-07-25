@@ -56,6 +56,31 @@ func TestDecodeDenseNodesDeltaDecode(t *testing.T) {
 	}
 }
 
+func TestDecodeDenseNodesDeltaDecodeMixedPackedAndUnpacked(t *testing.T) {
+	var dense []byte
+	dense = append(dense, pbPackedSint64(1, []int64{10, 5})...)
+	dense = append(dense, pbSint64Field(1, -3)...)
+	dense = append(dense, pbPackedSint64(8, []int64{100, 10})...)
+	dense = append(dense, pbSint64Field(8, 10)...)
+	dense = append(dense, pbPackedSint64(9, []int64{200, -20})...)
+	dense = append(dense, pbSint64Field(9, 30)...)
+	group := pbLenDelim(2, dense)
+
+	var buf osmbr.DenseNodesBuf
+	if err := osmbr.DecodeDenseNodes(group, &buf, nil); err != nil {
+		t.Fatalf("DecodeDenseNodes: %v", err)
+	}
+	if !slices.Equal(buf.IDs, []int64{10, 15, 12}) {
+		t.Errorf("IDs = %v, want mixed-field delta decode", buf.IDs)
+	}
+	if !slices.Equal(buf.Lats, []int64{100, 110, 120}) {
+		t.Errorf("Lats = %v, want mixed-field delta decode", buf.Lats)
+	}
+	if !slices.Equal(buf.Lons, []int64{200, 180, 210}) {
+		t.Errorf("Lons = %v, want mixed-field delta decode", buf.Lons)
+	}
+}
+
 func TestDecodeDenseNodesWithKeysVals(t *testing.T) {
 	// Two nodes. Node A has one tag (1→2), node B has two tags (3→4, 5→6).
 	keysVals := []int32{1, 2, 0, 3, 4, 5, 6, 0}

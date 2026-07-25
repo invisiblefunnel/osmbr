@@ -23,6 +23,11 @@ func pbPackedSint32(fieldNumber int, values []int32) []byte {
 	return pbLenDelim(fieldNumber, payload)
 }
 
+// pbSint32Field returns a sint32 field encoding.
+func pbSint32Field(fieldNumber int, value int32) []byte {
+	return pbVarintField(fieldNumber, pbZigzag(int64(value)))
+}
+
 // pbPackedUint32 encodes a packed repeated uint32 field (plain varints).
 func pbPackedUint32(fieldNumber int, values []uint32) []byte {
 	var payload []byte

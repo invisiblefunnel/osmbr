@@ -9,6 +9,10 @@ A low-level Go library for reading OpenStreetMap [PBF files](https://wiki.openst
 - **Raw values** — Returns raw integers for coordinates and string-table indices for tags. The caller applies granularity/offset conversion.
 - **No domain types** — There are no `Node`, `Way`, or `Relation` structs. The caller reads fields from buffer structs and builds whatever representation it needs.
 
+Protobuf decoding is done in-package against the PBF schema, so the only
+dependency is [klauspost/compress](https://github.com/klauspost/compress) for
+DEFLATE.
+
 ## Install
 
 ```
@@ -178,7 +182,7 @@ Iterates over `PrimitiveGroup` messages within a block. Call `Type()` to check t
 
 | Type | Fields | Notes |
 |---|---|---|
-| `DenseNodesBuf` | `IDs`, `Lats`, `Lons`, `KeysVals` | Parallel arrays; delta-decoded in-place |
+| `DenseNodesBuf` | `IDs`, `Lats`, `Lons`, `KeysVals` | Parallel arrays; `IDs`/`Lats`/`Lons` are absolute (delta-decoded) |
 | `WayBuf` | `Keys`, `Vals`, `Refs` | `Refs` are absolute node IDs (delta-decoded) |
 | `RelationBuf` | `Keys`, `Vals`, `RolesSID`, `MemIDs`, `Types` | `MemIDs` absolute (delta-decoded) |
 | `NodeBuf` | `Keys`, `Vals` | Individual nodes (rare in practice) |

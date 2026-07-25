@@ -99,16 +99,62 @@ func FuzzPrimitiveBlockDecodeFrom(f *testing.F) {
 	}
 
 	f.Fuzz(func(t *testing.T, data []byte) {
-		var pb osmbr.PrimitiveBlock
+		var (
+			pb    osmbr.PrimitiveBlock
+			dnBuf osmbr.DenseNodesBuf
+			nBuf  osmbr.NodeBuf
+			wBuf  osmbr.WayBuf
+			rBuf  osmbr.RelationBuf
+			iBuf  osmbr.InfoBuf
+			diBuf osmbr.DenseInfoBuf
+		)
 		if err := pb.DecodeFrom(data); err != nil {
 			return
 		}
-		_ = pb.NumStrings()
+		for i := range pb.NumStrings() {
+			_ = pb.String(i)
+		}
 		gs := pb.Groups()
 		for i := 0; gs.Next(); i++ {
-			_ = gs.Type()
 			if i > 4096 {
 				t.Fatalf("groups did not terminate on %d input bytes", len(data))
+			}
+			switch gs.Type() {
+			case osmbr.GroupTypeDense:
+				_ = gs.DecodeDenseNodes(&dnBuf, &diBuf)
+			case osmbr.GroupTypeNodes:
+				ns := gs.NodeScanner()
+				for j := 0; ; j++ {
+					if _, _, _, ok := ns.Next(&nBuf, &iBuf); !ok {
+						break
+					}
+					if j > 4096 {
+						t.Fatalf("nodes did not terminate on %d input bytes", len(data))
+					}
+				}
+				_ = ns.Err()
+			case osmbr.GroupTypeWays:
+				ws := gs.WayScanner()
+				for j := 0; ; j++ {
+					if _, ok := ws.Next(&wBuf, &iBuf); !ok {
+						break
+					}
+					if j > 4096 {
+						t.Fatalf("ways did not terminate on %d input bytes", len(data))
+					}
+				}
+				_ = ws.Err()
+			case osmbr.GroupTypeRelations:
+				rs := gs.RelationScanner()
+				for j := 0; ; j++ {
+					if _, ok := rs.Next(&rBuf, &iBuf); !ok {
+						break
+					}
+					if j > 4096 {
+						t.Fatalf("relations did not terminate on %d input bytes", len(data))
+					}
+				}
+				_ = rs.Err()
 			}
 		}
 		_ = gs.Err()

@@ -6,8 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-
-	"github.com/paulmach/protoscan"
 )
 
 // PBF format limits per the OSM PBF spec.
@@ -169,17 +167,14 @@ func (br *BlockReader) headerStorage(n int) []byte {
 func (br *BlockReader) decodeBlobHeader(header []byte) (int, error) {
 	var (
 		dataSize int64
-		m        protoscan.Message
+		m        msg
 	)
 	br.blockType = ""
-	m.Reset(header)
-	for m.Next() {
-		switch m.FieldNumber() {
+	m.reset(header)
+	for m.next() {
+		switch m.field {
 		case 1: // type (string)
-			b, err := m.Bytes()
-			if err != nil {
-				return 0, fmt.Errorf("osmbr: BlobHeader.type: %w", err)
-			}
+			b := m.bytes()
 			switch {
 			case bytes.Equal(b, bOSMHeader):
 				br.blockType = "OSMHeader"
@@ -189,17 +184,13 @@ func (br *BlockReader) decodeBlobHeader(header []byte) (int, error) {
 				br.blockType = string(b)
 			}
 		case 3: // datasize (int32)
-			v, err := m.Int32()
-			if err != nil {
-				return 0, fmt.Errorf("osmbr: BlobHeader.datasize: %w", err)
-			}
-			dataSize = int64(v)
+			dataSize = int64(m.int32())
 		default:
-			m.Skip()
+			m.skip()
 		}
 	}
-	if err := m.Err(); err != nil {
-		return 0, fmt.Errorf("osmbr: BlobHeader: %w", err)
+	if m.err != nil {
+		return 0, fmt.Errorf("osmbr: BlobHeader: %w", m.err)
 	}
 	if dataSize <= 0 || dataSize > maxBlobSize {
 		return 0, fmt.Errorf("osmbr: invalid BlobHeader.datasize: %d", dataSize)

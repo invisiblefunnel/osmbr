@@ -1,10 +1,6 @@
 package osmbr
 
-import (
-	"fmt"
-
-	"github.com/paulmach/protoscan"
-)
+import "fmt"
 
 // InfoBuf holds optional per-entity metadata decoded from an Info message.
 // Pass a non-nil *InfoBuf to WayScanner.Next, RelationScanner.Next, or
@@ -34,55 +30,48 @@ type DenseInfoBuf struct {
 	Visibles   []bool
 }
 
-// decodeOptionalInfo decodes the current field of msg as an Info submessage
-// into *info. If info is nil, the field is skipped. ctx is the enclosing
-// entity name used for error messages ("Node", "Way", "Relation").
-func decodeOptionalInfo(msg *protoscan.Message, info *InfoBuf, ctx string) error {
+// decodeOptionalInfo decodes the current field of m as an Info submessage
+// into *info. If info is nil, the field is skipped. Failures are recorded on
+// m. ctx is the enclosing entity name used for error messages.
+func decodeOptionalInfo(m *msg, info *InfoBuf, ctx string) {
 	if info == nil {
-		msg.Skip()
-		return nil
+		m.skip()
+		return
 	}
-	data, err := msg.MessageData()
-	if err != nil {
-		return fmt.Errorf("osmbr: %s.info: %w", ctx, err)
+	data := m.bytes()
+	if m.err != nil {
+		return
 	}
 	if err := decodeInfo(data, info); err != nil {
-		return fmt.Errorf("osmbr: %s.info: %w", ctx, err)
+		m.fail(fmt.Errorf("%s.info: %w", ctx, err))
 	}
-	return nil
 }
 
 // decodeInfo decodes a serialized Info message into info.
 func decodeInfo(data []byte, info *InfoBuf) error {
 	*info = InfoBuf{}
-	var msg protoscan.Message
-	msg.Reset(data)
-	for msg.Next() {
-		var err error
-		switch msg.FieldNumber() {
+	var m msg
+	m.reset(data)
+	for m.next() {
+		switch m.field {
 		case 1: // version (int32)
-			info.Version, err = msg.Int32()
+			info.Version = m.int32()
 		case 2: // timestamp (int64)
-			info.Timestamp, err = msg.Int64()
+			info.Timestamp = m.int64()
 		case 3: // changeset (int64)
-			info.Changeset, err = msg.Int64()
+			info.Changeset = m.int64()
 		case 4: // uid (int32)
-			info.UID, err = msg.Int32()
+			info.UID = m.int32()
 		case 5: // user_sid (uint32)
-			info.UserSID, err = msg.Uint32()
+			info.UserSID = m.uint32()
 		case 6: // visible (bool)
-			info.Visible, err = msg.Bool()
-			if err == nil {
-				info.HasVisible = true
-			}
+			info.Visible = m.boolean()
+			info.HasVisible = m.err == nil
 		default:
-			msg.Skip()
-		}
-		if err != nil {
-			return err
+			m.skip()
 		}
 	}
-	return msg.Err()
+	return m.err
 }
 
 // decodeDenseInfo decodes a serialized DenseInfo message into info.
@@ -95,37 +84,25 @@ func decodeDenseInfo(data []byte, info *DenseInfoBuf) error {
 	info.UserSIDs = info.UserSIDs[:0]
 	info.Visibles = info.Visibles[:0]
 
-	var msg protoscan.Message
-	msg.Reset(data)
-	for msg.Next() {
-		var err error
-		switch msg.FieldNumber() {
+	var m msg
+	m.reset(data)
+	for m.next() {
+		switch m.field {
 		case 1: // version (packed int32, NOT delta)
-			info.Versions, err = msg.RepeatedInt32(info.Versions)
+			info.Versions = m.repeatedInt32(info.Versions)
 		case 2: // timestamp (packed sint64, delta)
-			info.Timestamps, err = msg.RepeatedSint64(info.Timestamps)
+			info.Timestamps = m.repeatedDeltaSint64(info.Timestamps)
 		case 3: // changeset (packed sint64, delta)
-			info.Changesets, err = msg.RepeatedSint64(info.Changesets)
+			info.Changesets = m.repeatedDeltaSint64(info.Changesets)
 		case 4: // uid (packed sint32, delta)
-			info.UIDs, err = msg.RepeatedSint32(info.UIDs)
+			info.UIDs = m.repeatedDeltaSint32(info.UIDs)
 		case 5: // user_sid (packed uint32, NOT delta)
-			info.UserSIDs, err = msg.RepeatedUint32(info.UserSIDs)
+			info.UserSIDs = m.repeatedUint32(info.UserSIDs)
 		case 6: // visible (packed bool)
-			info.Visibles, err = msg.RepeatedBool(info.Visibles)
+			info.Visibles = m.repeatedBool(info.Visibles)
 		default:
-			msg.Skip()
-		}
-		if err != nil {
-			return err
+			m.skip()
 		}
 	}
-	if err := msg.Err(); err != nil {
-		return err
-	}
-
-	// Delta decode
-	deltaDecodeInt64(info.Timestamps)
-	deltaDecodeInt64(info.Changesets)
-	deltaDecodeInt32(info.UIDs)
-	return nil
+	return m.err
 }

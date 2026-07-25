@@ -1,10 +1,6 @@
 package osmbr
 
-import (
-	"fmt"
-
-	"github.com/paulmach/protoscan"
-)
+import "fmt"
 
 // GroupType identifies the kind of entities in a PrimitiveGroup.
 type GroupType int8
@@ -21,8 +17,7 @@ const (
 // GroupScanner iterates over PrimitiveGroups within a PrimitiveBlock.
 // Obtain one via PrimitiveBlock.Groups. GroupScanner is a value type.
 type GroupScanner struct {
-	msg       protoscan.Message
-	peek      protoscan.Message
+	m         msg
 	groupData []byte // raw bytes of current PrimitiveGroup (zero-copy)
 	gType     GroupType
 	err       error
@@ -31,42 +26,44 @@ type GroupScanner struct {
 // Next advances to the next PrimitiveGroup. Returns false on EOF or error.
 // Call Err to distinguish between them.
 func (gs *GroupScanner) Next() bool {
-	for gs.msg.Next() {
-		if gs.msg.FieldNumber() == 2 { // primitivegroup
-			d, err := gs.msg.MessageData()
-			if err != nil {
-				gs.err = fmt.Errorf("osmbr: PrimitiveGroup message: %w", err)
-				return false
-			}
-			gs.groupData = d
-
-			// Peek at first field to identify group type
-			gs.peek.Reset(d)
-			gs.gType = GroupTypeUnknown
-			if gs.peek.Next() {
-				switch gs.peek.FieldNumber() {
-				case 1:
-					gs.gType = GroupTypeNodes
-				case 2:
-					gs.gType = GroupTypeDense
-				case 3:
-					gs.gType = GroupTypeWays
-				case 4:
-					gs.gType = GroupTypeRelations
-				case 5:
-					gs.gType = GroupTypeChangesets
-				}
-			}
-			if err := gs.peek.Err(); err != nil {
-				gs.err = fmt.Errorf("osmbr: PrimitiveGroup peek: %w", err)
-				return false
-			}
-			return true
+	for gs.m.next() {
+		if gs.m.field != 2 { // primitivegroup
+			gs.m.skip()
+			continue
 		}
-		gs.msg.Skip()
+		d := gs.m.bytes()
+		if gs.m.err != nil {
+			gs.err = fmt.Errorf("osmbr: PrimitiveGroup message: %w", gs.m.err)
+			return false
+		}
+		gs.groupData = d
+
+		// Peek at first field to identify group type
+		var peek msg
+		peek.reset(d)
+		gs.gType = GroupTypeUnknown
+		if peek.next() {
+			switch peek.field {
+			case 1:
+				gs.gType = GroupTypeNodes
+			case 2:
+				gs.gType = GroupTypeDense
+			case 3:
+				gs.gType = GroupTypeWays
+			case 4:
+				gs.gType = GroupTypeRelations
+			case 5:
+				gs.gType = GroupTypeChangesets
+			}
+		}
+		if peek.err != nil {
+			gs.err = fmt.Errorf("osmbr: PrimitiveGroup peek: %w", peek.err)
+			return false
+		}
+		return true
 	}
-	if err := gs.msg.Err(); err != nil {
-		gs.err = fmt.Errorf("osmbr: PrimitiveBlock: %w", err)
+	if gs.m.err != nil {
+		gs.err = fmt.Errorf("osmbr: PrimitiveBlock: %w", gs.m.err)
 	}
 	return false
 }
@@ -88,7 +85,7 @@ func (gs *GroupScanner) DecodeDenseNodes(buf *DenseNodesBuf, info *DenseInfoBuf)
 // Only valid when Type() == GroupTypeWays.
 func (gs *GroupScanner) WayScanner() WayScanner {
 	var ws WayScanner
-	ws.msg.Reset(gs.groupData)
+	ws.m.reset(gs.groupData)
 	return ws
 }
 
@@ -96,7 +93,7 @@ func (gs *GroupScanner) WayScanner() WayScanner {
 // Only valid when Type() == GroupTypeRelations.
 func (gs *GroupScanner) RelationScanner() RelationScanner {
 	var rs RelationScanner
-	rs.msg.Reset(gs.groupData)
+	rs.m.reset(gs.groupData)
 	return rs
 }
 
@@ -105,6 +102,6 @@ func (gs *GroupScanner) RelationScanner() RelationScanner {
 // Note: non-dense nodes are rare in practice; most OSM data uses DenseNodes.
 func (gs *GroupScanner) NodeScanner() NodeScanner {
 	var ns NodeScanner
-	ns.msg.Reset(gs.groupData)
+	ns.m.reset(gs.groupData)
 	return ns
 }

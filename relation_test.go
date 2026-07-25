@@ -106,6 +106,32 @@ func TestRelationScannerNext(t *testing.T) {
 	}
 }
 
+func TestRelationScannerMemIDsMixedPackedAndUnpacked(t *testing.T) {
+	rel := pbVarintField(1, 500)
+	rel = append(rel, pbPackedSint64(9, []int64{100, -5})...)
+	rel = append(rel, pbSint64Field(9, 10)...)
+	block := primitiveBlockBytes([][]byte{nil}, pbLenDelim(2, relationsGroup(rel))...)
+
+	var (
+		pb   osmbr.PrimitiveBlock
+		rBuf osmbr.RelationBuf
+	)
+	if err := pb.DecodeFrom(block); err != nil {
+		t.Fatalf("DecodeFrom: %v", err)
+	}
+	gs := pb.Groups()
+	if !gs.Next() {
+		t.Fatalf("Groups.Next: %v", gs.Err())
+	}
+	rs := gs.RelationScanner()
+	if _, ok := rs.Next(&rBuf, nil); !ok {
+		t.Fatalf("RelationScanner.Next: %v", rs.Err())
+	}
+	if !slices.Equal(rBuf.MemIDs, []int64{100, 95, 105}) {
+		t.Errorf("MemIDs = %v, want mixed-field delta decode", rBuf.MemIDs)
+	}
+}
+
 func TestRelationMemberConstants(t *testing.T) {
 	// The constants map to wire-level int32 values 0/1/2 per PBF spec.
 	if osmbr.MemberTypeNode != 0 {
