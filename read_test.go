@@ -663,3 +663,133 @@ func TestRelationValues(t *testing.T) {
 		}
 	}
 }
+
+// walkFile runs the whole pipeline over the bundled extract using the supplied
+// buffers and returns per-entity counts, so callers can compare configurations
+// or measure allocations.
+type walkBufs struct {
+	rdr   *os.File
+	br    osmbr.BlockReader
+	dec   osmbr.Decompressor
+	pb    osmbr.PrimitiveBlock
+	dnBuf osmbr.DenseNodesBuf
+	nBuf  osmbr.NodeBuf
+	wBuf  osmbr.WayBuf
+	rBuf  osmbr.RelationBuf
+}
+
+type walkCounts struct {
+	blocks, nodes, ways, relations, refs, members int64
+	idSum, latSum, lonSum                         int64
+}
+
+func walkFile(t *testing.T, b *walkBufs) walkCounts {
+	t.Helper()
+	if _, err := b.rdr.Seek(0, io.SeekStart); err != nil {
+		t.Fatal(err)
+	}
+	b.br.Reset(b.rdr)
+
+	var c walkCounts
+	for b.br.Next() {
+		if b.br.Type() != "OSMData" {
+			continue
+		}
+		c.blocks++
+		data, err := b.dec.Decompress(b.br.Blob())
+		if err != nil {
+			t.Fatalf("block %d: Decompress: %v", c.blocks, err)
+		}
+		if err := b.pb.DecodeFrom(data); err != nil {
+			t.Fatalf("block %d: DecodeFrom: %v", c.blocks, err)
+		}
+		gs := b.pb.Groups()
+		for gs.Next() {
+			switch gs.Type() {
+			case osmbr.GroupTypeDense:
+				if err := gs.DecodeDenseNodes(&b.dnBuf, nil); err != nil {
+					t.Fatalf("block %d: DecodeDenseNodes: %v", c.blocks, err)
+				}
+				c.nodes += int64(len(b.dnBuf.IDs))
+				for i, id := range b.dnBuf.IDs {
+					c.idSum += id
+					c.latSum += b.dnBuf.Lats[i]
+					c.lonSum += b.dnBuf.Lons[i]
+				}
+			case osmbr.GroupTypeNodes:
+				ns := gs.NodeScanner()
+				for id, lat, lon, ok := ns.Next(&b.nBuf, nil); ok; id, lat, lon, ok = ns.Next(&b.nBuf, nil) {
+					c.nodes++
+					c.idSum += id
+					c.latSum += lat
+					c.lonSum += lon
+				}
+				if err := ns.Err(); err != nil {
+					t.Fatal(err)
+				}
+			case osmbr.GroupTypeWays:
+				ws := gs.WayScanner()
+				for id, ok := ws.Next(&b.wBuf, nil); ok; id, ok = ws.Next(&b.wBuf, nil) {
+					c.ways++
+					c.idSum += id
+					c.refs += int64(len(b.wBuf.Refs))
+				}
+				if err := ws.Err(); err != nil {
+					t.Fatal(err)
+				}
+			case osmbr.GroupTypeRelations:
+				rs := gs.RelationScanner()
+				for id, ok := rs.Next(&b.rBuf, nil); ok; id, ok = rs.Next(&b.rBuf, nil) {
+					c.relations++
+					c.idSum += id
+					c.members += int64(len(b.rBuf.MemIDs))
+				}
+				if err := rs.Err(); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+		if err := gs.Err(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := b.br.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+// TestReadFileNoAllocAfterWarmup pins the library's headline property: once the
+// caller's buffers have grown, reading a whole file allocates nothing.
+func TestReadFileNoAllocAfterWarmup(t *testing.T) {
+	bufs := walkBufs{rdr: openTestPBF(t)}
+	want := walkFile(t, &bufs) // warm up
+	if want.blocks == 0 || want.nodes == 0 || want.ways == 0 {
+		t.Fatalf("warm-up walk decoded nothing useful: %+v", want)
+	}
+
+	var got walkCounts
+	allocs := testing.AllocsPerRun(3, func() { got = walkFile(t, &bufs) })
+	if allocs != 0 {
+		t.Errorf("allocs per full-file read = %v, want 0", allocs)
+	}
+	if got != want {
+		t.Errorf("counts drifted between walks:\n got %+v\nwant %+v", got, want)
+	}
+}
+
+// TestReadFileChecksum confirms the real extract passes Adler-32 verification,
+// which the zero-value Decompressor performs, and decodes identically when the
+// check is skipped.
+func TestReadFileChecksum(t *testing.T) {
+	checked := walkBufs{rdr: openTestPBF(t)} // zero value verifies
+	want := walkFile(t, &checked)
+
+	skipped := walkBufs{rdr: openTestPBF(t)}
+	skipped.dec.SkipChecksum = true
+	got := walkFile(t, &skipped)
+
+	if got != want {
+		t.Errorf("SkipChecksum changed the decode:\n got %+v\nwant %+v", got, want)
+	}
+}
