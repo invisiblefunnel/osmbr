@@ -60,13 +60,20 @@ func (m *msg) reset(b []byte) {
 
 // next advances to the next field, reporting whether one was read.
 //
-// Field numbers up to 15 encode as a single tag byte, which covers every
-// field osmbr reads in the hot path; larger tags fall through to nextSlow.
+// Field numbers 1 through 15 encode as a single tag byte, which covers every
+// field osmbr reads in the hot path; everything else falls through to nextSlow.
+//
+// The fast path's guard is one comparison doing two jobs. Tag bytes 0x00-0x07
+// are the single-byte encodings of field number 0, which protobuf forbids;
+// subtracting 8 wraps them past the threshold, so they leave the fast path
+// alongside multi-byte tags and get rejected in nextSlow. Written as two
+// comparisons instead, the extra branch costs ~8% of a scan-heavy decode,
+// because next is small enough that one more compare is a real fraction of it.
 func (m *msg) next() bool {
 	if m.i >= len(m.data) {
 		return false
 	}
-	if c := m.data[m.i]; c < 0x80 {
+	if c := m.data[m.i]; c-8 < 0x78 {
 		m.i++
 		m.field = int32(c >> 3)
 		m.typ = c & 7
@@ -76,11 +83,13 @@ func (m *msg) next() bool {
 }
 
 func (m *msg) nextSlow() bool {
-	tag := m.varint()
+	tag := m.rawVarint()
 	if m.err != nil {
 		return false
 	}
-	if tag>>3 > maxFieldNumber {
+	// Rejects field number 0 from both the single-byte tags routed here by next
+	// and the non-canonical multi-byte forms (0x80 0x00 and friends).
+	if num := tag >> 3; num == 0 || num > maxFieldNumber {
 		m.fail(errFieldNumber)
 		return false
 	}
@@ -101,7 +110,7 @@ func (m *msg) fail(err error) {
 func (m *msg) skip() {
 	switch m.typ {
 	case wireVarint:
-		m.varint()
+		m.rawVarint()
 	case wireBytes:
 		m.bytes()
 	case wireFixed64:
@@ -121,7 +130,8 @@ func (m *msg) skip() {
 	}
 }
 
-// varint reads the varint at the cursor.
+// rawVarint reads a varint at the cursor without checking the current wire
+// type. Tags and length prefixes use it because they are not field values.
 //
 // Two things about this loop are load-bearing, both measured on the bundled
 // extract. It indexes m.data from m.i rather than ranging over m.data[m.i:],
@@ -130,29 +140,47 @@ func (m *msg) skip() {
 // budget so it folds into its callers, which is where the rest of the scanning
 // cost would otherwise sit — hence also the single error for both truncation
 // and overflow, since a second error site pushes it over.
-func (m *msg) varint() uint64 {
-	var v uint64
+func (m *msg) rawVarint() (v uint64) {
+	if m.err != nil {
+		return
+	}
 	var shift uint
 	for i := m.i; i < len(m.data); i++ {
-		c := m.data[i]
-		v |= uint64(c&0x7f) << shift
-		if c < 0x80 {
-			m.i = i + 1
-			return v
-		}
-		shift += 7
-		if shift >= 64 {
+		c := uint64(m.data[i])
+		// On the tenth byte (shift 63), only 0 and 1 survive this
+		// round-trip. Earlier bytes have room for all eight bits.
+		if c<<shift>>shift != c {
 			break
 		}
+		v |= (c & 0x7f) << shift
+		if c < 0x80 {
+			m.i = i + 1
+			return
+		}
+		shift += 7
 	}
-	m.fail(errVarint)
-	return 0
+	m.err = errVarint
+	m.i = len(m.data)
+	return
+}
+
+// varint returns the current varint field's value.
+func (m *msg) varint() uint64 {
+	if m.typ != wireVarint {
+		m.fail(errWireType)
+		return 0
+	}
+	return m.rawVarint()
 }
 
 // bytes returns the current length-delimited field's payload as a subslice of
 // the scanned buffer. No copy is made.
 func (m *msg) bytes() []byte {
-	n := m.varint()
+	if m.typ != wireBytes {
+		m.fail(errWireType)
+		return nil
+	}
+	n := m.rawVarint()
 	if n > uint64(len(m.data)-m.i) {
 		m.fail(errTruncated)
 		return nil
@@ -204,7 +232,7 @@ func (m *msg) repeatedDeltaSint64(dst []int64) []int64 {
 		prev = dst[len(dst)-1]
 	}
 	if m.typ == wireVarint {
-		return append(dst, prev+unzig64(m.varint()))
+		return append(dst, prev+unzig64(m.rawVarint()))
 	}
 	data := m.bytes()
 	for i := 0; i < len(data); {
@@ -222,12 +250,12 @@ func (m *msg) repeatedDeltaSint64(dst []int64) []int64 {
 				m.fail(errTruncated)
 				return dst
 			}
-			if shift >= 64 {
+			b = uint64(data[i])
+			i++
+			if shift == 63 && b > 1 {
 				m.fail(errVarint)
 				return dst
 			}
-			b = uint64(data[i])
-			i++
 			v |= (b & 0x7f) << shift
 			if b < 0x80 {
 				break
@@ -247,7 +275,7 @@ func (m *msg) repeatedDeltaSint32(dst []int32) []int32 {
 		prev = dst[len(dst)-1]
 	}
 	if m.typ == wireVarint {
-		return append(dst, prev+int32(unzig64(m.varint())))
+		return append(dst, prev+int32(unzig64(m.rawVarint())))
 	}
 	data := m.bytes()
 	for i := 0; i < len(data); {
@@ -265,12 +293,12 @@ func (m *msg) repeatedDeltaSint32(dst []int32) []int32 {
 				m.fail(errTruncated)
 				return dst
 			}
-			if shift >= 64 {
+			b = uint64(data[i])
+			i++
+			if shift == 63 && b > 1 {
 				m.fail(errVarint)
 				return dst
 			}
-			b = uint64(data[i])
-			i++
 			v |= (b & 0x7f) << shift
 			if b < 0x80 {
 				break
@@ -286,7 +314,7 @@ func (m *msg) repeatedDeltaSint32(dst []int32) []int32 {
 // repeatedUint32 appends the field's plain varint values to dst.
 func (m *msg) repeatedUint32(dst []uint32) []uint32 {
 	if m.typ == wireVarint {
-		return append(dst, uint32(m.varint()))
+		return append(dst, uint32(m.rawVarint()))
 	}
 	data := m.bytes()
 	for i := 0; i < len(data); {
@@ -303,12 +331,12 @@ func (m *msg) repeatedUint32(dst []uint32) []uint32 {
 				m.fail(errTruncated)
 				return dst
 			}
-			if shift >= 64 {
+			b = uint64(data[i])
+			i++
+			if shift == 63 && b > 1 {
 				m.fail(errVarint)
 				return dst
 			}
-			b = uint64(data[i])
-			i++
 			v |= (b & 0x7f) << shift
 			if b < 0x80 {
 				break
@@ -324,7 +352,7 @@ func (m *msg) repeatedUint32(dst []uint32) []uint32 {
 // encoded as 10-byte varints, so the value is truncated rather than ranged.
 func (m *msg) repeatedInt32(dst []int32) []int32 {
 	if m.typ == wireVarint {
-		return append(dst, int32(m.varint()))
+		return append(dst, int32(m.rawVarint()))
 	}
 	data := m.bytes()
 	for i := 0; i < len(data); {
@@ -341,12 +369,12 @@ func (m *msg) repeatedInt32(dst []int32) []int32 {
 				m.fail(errTruncated)
 				return dst
 			}
-			if shift >= 64 {
+			b = uint64(data[i])
+			i++
+			if shift == 63 && b > 1 {
 				m.fail(errVarint)
 				return dst
 			}
-			b = uint64(data[i])
-			i++
 			v |= (b & 0x7f) << shift
 			if b < 0x80 {
 				break
@@ -361,7 +389,7 @@ func (m *msg) repeatedInt32(dst []int32) []int32 {
 // repeatedBool appends the field's varint values to dst as booleans.
 func (m *msg) repeatedBool(dst []bool) []bool {
 	if m.typ == wireVarint {
-		return append(dst, m.boolean())
+		return append(dst, m.rawVarint() != 0)
 	}
 	data := m.bytes()
 	for i := 0; i < len(data); {
@@ -378,12 +406,12 @@ func (m *msg) repeatedBool(dst []bool) []bool {
 				m.fail(errTruncated)
 				return dst
 			}
-			if shift >= 64 {
+			b = uint64(data[i])
+			i++
+			if shift == 63 && b > 1 {
 				m.fail(errVarint)
 				return dst
 			}
-			b = uint64(data[i])
-			i++
 			v |= (b & 0x7f) << shift
 			if b < 0x80 {
 				break

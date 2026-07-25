@@ -122,6 +122,8 @@ func TestMsgMalformedInput(t *testing.T) {
 		{"end group wire type", tagBytes(1, 4)},
 		{"varint over 64 bits", append(tagBytes(1, wireVarint),
 			0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x01)},
+		{"overflowing tenth varint byte", append(tagBytes(1, wireVarint),
+			0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x02)},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -140,6 +142,49 @@ func TestMsgMalformedInput(t *testing.T) {
 	}
 }
 
+func TestMsgAccessorsRejectWrongWireType(t *testing.T) {
+	accessors := map[string]struct {
+		data   []byte
+		decode func(*msg)
+	}{
+		"bytes":               {taggedVarint(1, 0), func(m *msg) { m.bytes() }},
+		"varint":              {lenDelim(1, nil), func(m *msg) { m.varint() }},
+		"int64":               {lenDelim(1, nil), func(m *msg) { m.int64() }},
+		"int32":               {lenDelim(1, nil), func(m *msg) { m.int32() }},
+		"uint32":              {lenDelim(1, nil), func(m *msg) { m.uint32() }},
+		"sint64":              {lenDelim(1, nil), func(m *msg) { m.sint64() }},
+		"boolean":             {lenDelim(1, nil), func(m *msg) { m.boolean() }},
+		"repeatedUint32":      {fixed32Field(1), func(m *msg) { m.repeatedUint32(nil) }},
+		"repeatedInt32":       {fixed32Field(1), func(m *msg) { m.repeatedInt32(nil) }},
+		"repeatedBool":        {fixed32Field(1), func(m *msg) { m.repeatedBool(nil) }},
+		"repeatedDeltaSint64": {fixed32Field(1), func(m *msg) { m.repeatedDeltaSint64(nil) }},
+		"repeatedDeltaSint32": {fixed32Field(1), func(m *msg) { m.repeatedDeltaSint32(nil) }},
+	}
+	for name, tc := range accessors {
+		t.Run(name, func(t *testing.T) {
+			var m msg
+			m.reset(tc.data)
+			if !m.next() {
+				t.Fatal("next = false")
+			}
+			tc.decode(&m)
+			if m.err != errWireType {
+				t.Errorf("err = %v, want %v", m.err, errWireType)
+			}
+		})
+	}
+}
+
+func taggedVarint(field int, value uint64) []byte {
+	out := tagBytes(field, wireVarint)
+	return append(out, varintBytes(value)...)
+}
+
+func fixed32Field(field int) []byte {
+	out := tagBytes(field, wireFixed32)
+	return append(out, 0, 0, 0, 0)
+}
+
 func TestMsgRejectsHugeFieldNumber(t *testing.T) {
 	// Field number 2^29, one past the protobuf maximum.
 	var m msg
@@ -149,6 +194,32 @@ func TestMsgRejectsHugeFieldNumber(t *testing.T) {
 	}
 	if m.err != errFieldNumber {
 		t.Errorf("err = %v, want %v", m.err, errFieldNumber)
+	}
+}
+
+func TestMsgRejectsFieldNumberZero(t *testing.T) {
+	// Field number 0 is not a valid protobuf field. Tag bytes 0x00-0x07 are the
+	// single-byte encodings of it, one per wire type.
+	for tag := byte(0); tag < 8; tag++ {
+		var m msg
+		m.reset([]byte{tag, 0x00})
+		if m.next() {
+			t.Errorf("tag %#02x: next accepted field 0 (field=%d typ=%d)", tag, m.field, m.typ)
+		}
+		if m.err != errFieldNumber {
+			t.Errorf("tag %#02x: err = %v, want %v", tag, m.err, errFieldNumber)
+		}
+	}
+
+	// The same field number reached through a non-canonical multi-byte tag,
+	// which takes the nextSlow path instead.
+	var m msg
+	m.reset([]byte{0x80, 0x00, 0x00})
+	if m.next() {
+		t.Errorf("multi-byte tag: next accepted field 0 (field=%d typ=%d)", m.field, m.typ)
+	}
+	if m.err != errFieldNumber {
+		t.Errorf("multi-byte tag: err = %v, want %v", m.err, errFieldNumber)
 	}
 }
 
@@ -308,6 +379,257 @@ func TestRepeatedBool(t *testing.T) {
 		t.Fatalf("err = %v", m.err)
 	}
 	want := []bool{true, false, true, true}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+	}
+}
+
+// The five repeated* decoders each carry their own copy of the varint loop, for
+// reasons the comment above them measures out. That makes divergence between
+// copies the failure mode to guard against, so the next three tests run every
+// decoder over the same shapes: multi-byte values, the unpacked encoding, and
+// an over-long varint.
+
+func TestRepeatedMultiByteValues(t *testing.T) {
+	// Values from every varint length, so each decoder's continuation loop runs.
+	t.Run("uint32", func(t *testing.T) {
+		want := []uint32{0, 127, 128, 300, 1 << 14, 1<<32 - 1}
+		var m msg
+		m.reset(lenDelim(1, packed(0, 127, 128, 300, 1<<14, 1<<32-1)))
+		if !m.next() {
+			t.Fatal("next = false")
+		}
+		got := m.repeatedUint32(nil)
+		if m.err != nil {
+			t.Fatalf("err = %v", m.err)
+		}
+		assertUint32s(t, got, want)
+	})
+
+	t.Run("int32", func(t *testing.T) {
+		want := []int32{0, 127, 128, 300, 1 << 20}
+		var m msg
+		m.reset(lenDelim(1, packed(0, 127, 128, 300, 1<<20)))
+		if !m.next() {
+			t.Fatal("next = false")
+		}
+		got := m.repeatedInt32(nil)
+		if m.err != nil {
+			t.Fatalf("err = %v", m.err)
+		}
+		assertInt32s(t, got, want)
+	})
+
+	t.Run("bool", func(t *testing.T) {
+		// A bool is any varint, including a non-canonical multi-byte one.
+		var m msg
+		m.reset(lenDelim(1, packed(1, 0, 300, 1<<31, 128)))
+		if !m.next() {
+			t.Fatal("next = false")
+		}
+		got := m.repeatedBool(nil)
+		if m.err != nil {
+			t.Fatalf("err = %v", m.err)
+		}
+		want := []bool{true, false, true, true, true}
+		if len(got) != len(want) {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Errorf("[%d] got %v, want %v", i, got[i], want[i])
+			}
+		}
+	})
+
+	t.Run("deltaSint64", func(t *testing.T) {
+		deltas := []int64{1000, -70000, 64, -64, 1 << 40, -1 << 40}
+		var vals []uint64
+		for _, d := range deltas {
+			vals = append(vals, zigzag(d))
+		}
+		var m msg
+		m.reset(lenDelim(1, packed(vals...)))
+		if !m.next() {
+			t.Fatal("next = false")
+		}
+		got := m.repeatedDeltaSint64(nil)
+		if m.err != nil {
+			t.Fatalf("err = %v", m.err)
+		}
+		var want []int64
+		var prev int64
+		for _, d := range deltas {
+			prev += d
+			want = append(want, prev)
+		}
+		if len(got) != len(want) {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Errorf("[%d] got %d, want %d", i, got[i], want[i])
+			}
+		}
+	})
+
+	t.Run("deltaSint32", func(t *testing.T) {
+		deltas := []int32{1000, -70000, 64, -64, 2147483647, -2147483648, 300}
+		var vals []uint64
+		for _, d := range deltas {
+			vals = append(vals, zigzag(int64(d)))
+		}
+		var m msg
+		m.reset(lenDelim(1, packed(vals...)))
+		if !m.next() {
+			t.Fatal("next = false")
+		}
+		got := m.repeatedDeltaSint32(nil)
+		if m.err != nil {
+			t.Fatalf("err = %v", m.err)
+		}
+		var want []int32
+		var prev int32
+		for _, d := range deltas {
+			prev += d
+			want = append(want, prev)
+		}
+		assertInt32s(t, got, want)
+	})
+}
+
+// TestRepeatedUnpackedEveryDecoder covers the wireVarint branch each decoder
+// takes when a repeated field arrives one entry per tag.
+func TestRepeatedUnpackedEveryDecoder(t *testing.T) {
+	// Two entries per field, each a value that needs more than one byte.
+	unpacked := func(vals ...uint64) []byte {
+		var out []byte
+		for _, v := range vals {
+			out = append(out, tagBytes(1, wireVarint)...)
+			out = append(out, varintBytes(v)...)
+		}
+		return out
+	}
+
+	t.Run("int32", func(t *testing.T) {
+		neg := int64(-5) // negative int32s sign-extend to 10-byte varints
+		var m msg
+		m.reset(unpacked(uint64(neg), 7))
+		var got []int32
+		for m.next() {
+			got = m.repeatedInt32(got)
+		}
+		if m.err != nil {
+			t.Fatalf("err = %v", m.err)
+		}
+		assertInt32s(t, got, []int32{-5, 7})
+	})
+
+	t.Run("bool", func(t *testing.T) {
+		var m msg
+		m.reset(unpacked(0, 300))
+		var got []bool
+		for m.next() {
+			got = m.repeatedBool(got)
+		}
+		if m.err != nil {
+			t.Fatalf("err = %v", m.err)
+		}
+		if len(got) != 2 || got[0] || !got[1] {
+			t.Errorf("got %v, want [false true]", got)
+		}
+	})
+
+	t.Run("deltaSint32", func(t *testing.T) {
+		var m msg
+		m.reset(unpacked(zigzag(-70000), zigzag(5)))
+		var got []int32
+		for m.next() {
+			got = m.repeatedDeltaSint32(got)
+		}
+		if m.err != nil {
+			t.Fatalf("err = %v", m.err)
+		}
+		assertInt32s(t, got, []int32{-70000, -69995})
+	})
+
+	t.Run("deltaSint64", func(t *testing.T) {
+		var m msg
+		m.reset(unpacked(zigzag(1<<40), zigzag(-5)))
+		var got []int64
+		for m.next() {
+			got = m.repeatedDeltaSint64(got)
+		}
+		if m.err != nil {
+			t.Fatalf("err = %v", m.err)
+		}
+		if len(got) != 2 || got[0] != 1<<40 || got[1] != 1<<40-5 {
+			t.Errorf("got %v, want [%d %d]", got, int64(1)<<40, int64(1)<<40-5)
+		}
+	})
+}
+
+// TestRepeatedOverlongVarint covers the tenth-byte guard in each decoder: a
+// varint carrying more than 64 bits of payload is rejected, not truncated.
+func TestRepeatedOverlongVarint(t *testing.T) {
+	// One valid value, then eleven continuation bytes and a terminator.
+	payload := []byte{5, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x01}
+	decoders := map[string]func(*msg){
+		"uint32":      func(m *msg) { m.repeatedUint32(nil) },
+		"int32":       func(m *msg) { m.repeatedInt32(nil) },
+		"bool":        func(m *msg) { m.repeatedBool(nil) },
+		"deltaSint64": func(m *msg) { m.repeatedDeltaSint64(nil) },
+		"deltaSint32": func(m *msg) { m.repeatedDeltaSint32(nil) },
+	}
+	for name, decode := range decoders {
+		t.Run(name, func(t *testing.T) {
+			var m msg
+			m.reset(lenDelim(1, payload))
+			if !m.next() {
+				t.Fatal("next = false")
+			}
+			decode(&m)
+			if m.err != errVarint {
+				t.Errorf("err = %v, want %v", m.err, errVarint)
+			}
+		})
+	}
+}
+
+func TestRepeatedOverflowingTenthVarintByte(t *testing.T) {
+	// The tenth byte of a uint64 varint may carry only bit 63. A terminal byte
+	// greater than one has payload bits beyond uint64 and must not be truncated.
+	overflow := []byte{0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x02}
+	payload := append([]byte{5}, overflow...)
+	decoders := map[string]func(*msg){
+		"uint32":      func(m *msg) { m.repeatedUint32(nil) },
+		"int32":       func(m *msg) { m.repeatedInt32(nil) },
+		"bool":        func(m *msg) { m.repeatedBool(nil) },
+		"deltaSint64": func(m *msg) { m.repeatedDeltaSint64(nil) },
+		"deltaSint32": func(m *msg) { m.repeatedDeltaSint32(nil) },
+	}
+	for name, decode := range decoders {
+		t.Run(name, func(t *testing.T) {
+			var m msg
+			m.reset(lenDelim(1, payload))
+			if !m.next() {
+				t.Fatal("next = false")
+			}
+			decode(&m)
+			if m.err != errVarint {
+				t.Errorf("err = %v, want %v", m.err, errVarint)
+			}
+		})
+	}
+}
+
+func assertInt32s(t *testing.T, got, want []int32) {
+	t.Helper()
 	if len(got) != len(want) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
