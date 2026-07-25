@@ -238,7 +238,8 @@ For dense nodes, tags are packed into a flat `KeysVals` array with `0` delimiter
 ```go
 j := 0
 for i := range dnBuf.IDs {
-    for j < len(dnBuf.KeysVals) && dnBuf.KeysVals[j] != 0 {
+    // j+1 keeps a malformed trailing key with no value from reading past the end.
+    for j+1 < len(dnBuf.KeysVals) && dnBuf.KeysVals[j] != 0 {
         key := pb.String(int(dnBuf.KeysVals[j]))
         val := pb.String(int(dnBuf.KeysVals[j+1]))
         j += 2
@@ -247,6 +248,8 @@ for i := range dnBuf.IDs {
     j++ // skip the 0 delimiter
 }
 ```
+
+`KeysVals` is not validated, and neither are the indices in it. `String(i)` panics on an out-of-range index, so check against `NumStrings()` when reading files you do not trust.
 
 ## Metadata
 
@@ -272,6 +275,10 @@ for i, id := range dnBuf.IDs {
     fmt.Printf("node %d: v%d ts=%d\n", id, diBuf.Versions[i], ts)
 }
 ```
+
+`DecodeDenseNodes` guarantees each `DenseInfoBuf` array is either empty or exactly as long as `IDs`, rejecting files that disagree, so a non-empty array indexes by node position without a bounds check of its own. An array is empty when the file omits that field — `Visibles` outside full-history extracts, or all of them for a file stripped of metadata — so check `len()` once before the loop rather than per node.
+
+Both buffers are cleared at the start of every call, so one of each can be reused for a whole file. Metadata is optional per entity and per group: an entity with no `Info` reads back as the zero `InfoBuf`, and a group with no `DenseInfo` leaves every `DenseInfoBuf` array empty, rather than either one retaining what the previous entity or group left behind.
 
 ## Performance
 

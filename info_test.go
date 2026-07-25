@@ -82,15 +82,17 @@ func TestInfoBufVisibleAbsent(t *testing.T) {
 	}
 }
 
+// TestInfoBufEmpty covers a Way with no Info field at all. Next must zero the
+// buffer rather than leave whatever it held, since the caller cannot otherwise
+// tell metadata-free from stale.
 func TestInfoBufEmpty(t *testing.T) {
 	block := primitiveBlockBytes([][]byte{nil}, pbLenDelim(2, wayWithInfoGroup(nil))...)
 
 	var (
 		pb   osmbr.PrimitiveBlock
 		wBuf osmbr.WayBuf
-		iBuf osmbr.InfoBuf
 	)
-	iBuf.Version = 999 // ensure decodeInfo zeroes it
+	iBuf := osmbr.InfoBuf{Version: 999, Changeset: 7, HasVisible: true}
 	if err := pb.DecodeFrom(block); err != nil {
 		t.Fatalf("DecodeFrom: %v", err)
 	}
@@ -99,11 +101,54 @@ func TestInfoBufEmpty(t *testing.T) {
 		t.Fatalf("Groups.Next: %v", gs.Err())
 	}
 	ws := gs.WayScanner()
-	// No Info field → iBuf is untouched by default, but the way has no field 4
-	// at all so decodeInfo is never called. Reset iBuf manually for clarity.
-	iBuf = osmbr.InfoBuf{Version: 999}
-	_, _ = ws.Next(&wBuf, &iBuf)
-	_ = ws.Err()
+	if _, ok := ws.Next(&wBuf, &iBuf); !ok {
+		t.Fatalf("WayScanner.Next: %v", ws.Err())
+	}
+	if iBuf != (osmbr.InfoBuf{}) {
+		t.Errorf("InfoBuf = %+v, want the zero value", iBuf)
+	}
+}
+
+// TestInfoBufNotStaleAcrossEntities is the same reset across a scan: a Way
+// carrying Info followed by one without must not report the first way's
+// metadata for the second.
+func TestInfoBufNotStaleAcrossEntities(t *testing.T) {
+	info := pbVarintField(1, 42)                  // version
+	info = append(info, pbVarintField(3, 999)...) // changeset
+	group := wayWithInfoGroup(info)
+	group = append(group, wayWithInfoGroup(nil)...)
+	block := primitiveBlockBytes([][]byte{nil}, pbLenDelim(2, group)...)
+
+	var (
+		pb   osmbr.PrimitiveBlock
+		wBuf osmbr.WayBuf
+		iBuf osmbr.InfoBuf
+	)
+	if err := pb.DecodeFrom(block); err != nil {
+		t.Fatalf("DecodeFrom: %v", err)
+	}
+	gs := pb.Groups()
+	if !gs.Next() {
+		t.Fatalf("Groups.Next: %v", gs.Err())
+	}
+	ws := gs.WayScanner()
+
+	if _, ok := ws.Next(&wBuf, &iBuf); !ok {
+		t.Fatalf("first Next: %v", ws.Err())
+	}
+	if iBuf.Version != 42 || iBuf.Changeset != 999 {
+		t.Fatalf("first way: InfoBuf = %+v, want version 42 changeset 999", iBuf)
+	}
+
+	if _, ok := ws.Next(&wBuf, &iBuf); !ok {
+		t.Fatalf("second Next: %v", ws.Err())
+	}
+	if iBuf != (osmbr.InfoBuf{}) {
+		t.Errorf("second way has no Info but InfoBuf = %+v, want the zero value", iBuf)
+	}
+	if err := ws.Err(); err != nil {
+		t.Fatalf("Err: %v", err)
+	}
 }
 
 func TestInfoSkipWhenInfoArgNil(t *testing.T) {

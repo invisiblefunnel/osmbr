@@ -17,11 +17,15 @@ import "fmt"
 //
 //	(keyIdx valIdx)* 0  per node, repeated
 //
-// The 0 value delimits one node's tags from the next. Example iteration:
+// The 0 value delimits one node's tags from the next. KeysVals is not
+// validated: a malformed file may end mid-pair, and the indices themselves are
+// not checked against the string table, so bound the pair read and use
+// NumStrings before calling String. Example iteration:
 //
 //	j := 0
 //	for i := range buf.IDs {
-//	    for j < len(buf.KeysVals) && buf.KeysVals[j] != 0 {
+//	    // j+1 keeps a trailing key with no value from reading past the end.
+//	    for j+1 < len(buf.KeysVals) && buf.KeysVals[j] != 0 {
 //	        key := pb.String(int(buf.KeysVals[j]))
 //	        val := pb.String(int(buf.KeysVals[j+1]))
 //	        j += 2
@@ -44,6 +48,13 @@ func DecodeDenseNodes(groupData []byte, buf *DenseNodesBuf, info *DenseInfoBuf) 
 	buf.Lats = buf.Lats[:0]
 	buf.Lons = buf.Lons[:0]
 	buf.KeysVals = buf.KeysVals[:0]
+
+	// Reset up front, not in decodeDenseInfo: denseinfo is an optional field, so
+	// a group that omits it would otherwise leave the previous group's metadata
+	// in place for the caller to read against this group's nodes.
+	if info != nil {
+		info.reset()
+	}
 
 	// Scan PrimitiveGroup for field 2 (DenseNodes message)
 	var pgMsg msg
@@ -100,6 +111,47 @@ func DecodeDenseNodes(groupData []byte, buf *DenseNodesBuf, info *DenseInfoBuf) 
 		return fmt.Errorf("osmbr: DenseNodes length mismatch: IDs=%d Lats=%d Lons=%d",
 			len(buf.IDs), len(buf.Lats), len(buf.Lons))
 	}
+	if info != nil {
+		if err := checkDenseInfoLen(info, len(buf.IDs)); err != nil {
+			return err
+		}
+	}
 
 	return nil
+}
+
+// checkDenseInfoLen reports whether every DenseInfo array is either absent or
+// exactly as long as the node arrays it parallels. Callers index these by node
+// position, so a short array from a malformed file would otherwise panic at the
+// call site instead of failing here.
+//
+// Absent (length 0) is allowed throughout: a file carries metadata for every
+// node in a group or none, and visible in particular only appears in
+// full-history extracts.
+func checkDenseInfoLen(info *DenseInfoBuf, n int) error {
+	if got := len(info.Versions); got != 0 && got != n {
+		return denseInfoLenErr("version", got, n)
+	}
+	if got := len(info.Timestamps); got != 0 && got != n {
+		return denseInfoLenErr("timestamp", got, n)
+	}
+	if got := len(info.Changesets); got != 0 && got != n {
+		return denseInfoLenErr("changeset", got, n)
+	}
+	if got := len(info.UIDs); got != 0 && got != n {
+		return denseInfoLenErr("uid", got, n)
+	}
+	if got := len(info.UserSIDs); got != 0 && got != n {
+		return denseInfoLenErr("user_sid", got, n)
+	}
+	if got := len(info.Visibles); got != 0 && got != n {
+		return denseInfoLenErr("visible", got, n)
+	}
+	return nil
+}
+
+// denseInfoLenErr keeps the formatting off checkDenseInfoLen's hot path.
+func denseInfoLenErr(field string, got, want int) error {
+	return fmt.Errorf("osmbr: DenseInfo.%s length mismatch: %d entries, want %d or 0",
+		field, got, want)
 }

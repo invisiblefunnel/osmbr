@@ -42,6 +42,11 @@ func (ns *NodeScanner) Next(buf *NodeBuf, info *InfoBuf) (id, lat, lon int64, ok
 		buf.Keys = buf.Keys[:0]
 		buf.Vals = buf.Vals[:0]
 		id, lat, lon = 0, 0, 0
+		// See WayScanner.Next: info is optional per entity and must not carry
+		// over from the previous Node.
+		if info != nil {
+			*info = InfoBuf{}
+		}
 
 		var nodeMsg msg
 		nodeMsg.reset(nodeData)
@@ -54,7 +59,7 @@ func (ns *NodeScanner) Next(buf *NodeBuf, info *InfoBuf) (id, lat, lon int64, ok
 			case 3: // vals (packed uint32)
 				buf.Vals = nodeMsg.repeatedUint32(buf.Vals)
 			case 4: // info
-				decodeOptionalInfo(&nodeMsg, info, "Node")
+				decodeOptionalInfo(&nodeMsg, info)
 			case 8: // lat (sint64)
 				lat = nodeMsg.sint64()
 			case 9: // lon (sint64)

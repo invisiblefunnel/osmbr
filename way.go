@@ -39,6 +39,12 @@ func (ws *WayScanner) Next(buf *WayBuf, info *InfoBuf) (id int64, ok bool) {
 		buf.Keys = buf.Keys[:0]
 		buf.Vals = buf.Vals[:0]
 		buf.Refs = buf.Refs[:0]
+		// info is optional per entity, so zero it here rather than in
+		// decodeInfo: a Way without one must not report the previous Way's
+		// metadata.
+		if info != nil {
+			*info = InfoBuf{}
+		}
 
 		var wayMsg msg
 		wayMsg.reset(wayData)
@@ -51,7 +57,7 @@ func (ws *WayScanner) Next(buf *WayBuf, info *InfoBuf) (id int64, ok bool) {
 			case 3: // vals (packed uint32)
 				buf.Vals = wayMsg.repeatedUint32(buf.Vals)
 			case 4: // info
-				decodeOptionalInfo(&wayMsg, info, "Way")
+				decodeOptionalInfo(&wayMsg, info)
 			case 8: // refs (packed sint64, delta-encoded)
 				buf.Refs = wayMsg.repeatedDeltaSint64(buf.Refs)
 			default:
