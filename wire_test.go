@@ -2,6 +2,7 @@ package osmbr
 
 import (
 	"bytes"
+	"fmt"
 	"testing"
 )
 
@@ -448,7 +449,7 @@ func TestRepeatedMultiByteValues(t *testing.T) {
 	})
 
 	t.Run("deltaSint64", func(t *testing.T) {
-		deltas := []int64{1000, -70000, 64, -64, 1 << 40, -1 << 40}
+		deltas := []int64{1000, -70000, 64, -64, 1 << 20, 1 << 27, 1 << 40, -1 << 40}
 		var vals []uint64
 		for _, d := range deltas {
 			vals = append(vals, zigzag(d))
@@ -661,6 +662,25 @@ func TestRepeatedTruncatedPayload(t *testing.T) {
 			decode(&m)
 			if m.err == nil {
 				t.Fatal("err = nil, want an error")
+			}
+		})
+	}
+}
+
+func TestRepeatedDeltaSint64TruncatedUnrolledVarint(t *testing.T) {
+	// Exercise the bounds check before each unrolled byte and the handoff to
+	// the checked long-varint loop after byte five.
+	for n := 1; n <= 5; n++ {
+		t.Run(fmt.Sprintf("after_byte_%d", n), func(t *testing.T) {
+			payload := append([]byte{5}, bytes.Repeat([]byte{0x80}, n)...)
+			var m msg
+			m.reset(lenDelim(1, payload))
+			if !m.next() {
+				t.Fatal("next = false")
+			}
+			got := m.repeatedDeltaSint64(nil)
+			if m.err != errTruncated {
+				t.Errorf("err = %v, want %v; decoded %v", m.err, errTruncated, got)
 			}
 		})
 	}

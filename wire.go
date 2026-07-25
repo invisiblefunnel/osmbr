@@ -244,8 +244,50 @@ func (m *msg) repeatedDeltaSint64(dst []int64) []int64 {
 			continue
 		}
 		v := b & 0x7f
-		shift := uint(7)
-		for {
+		// Real-planet ID, coordinate, and reference deltas almost always end
+		// by byte five. Unroll those bytes so the tenth-byte overflow guard
+		// stays on the rare long-varint path without adding a helper call.
+		if i >= len(data) {
+			m.fail(errTruncated)
+			return dst
+		}
+		b = uint64(data[i])
+		i++
+		v |= (b & 0x7f) << 7
+		if b < 0x80 {
+			goto decoded
+		}
+		if i >= len(data) {
+			m.fail(errTruncated)
+			return dst
+		}
+		b = uint64(data[i])
+		i++
+		v |= (b & 0x7f) << 14
+		if b < 0x80 {
+			goto decoded
+		}
+		if i >= len(data) {
+			m.fail(errTruncated)
+			return dst
+		}
+		b = uint64(data[i])
+		i++
+		v |= (b & 0x7f) << 21
+		if b < 0x80 {
+			goto decoded
+		}
+		if i >= len(data) {
+			m.fail(errTruncated)
+			return dst
+		}
+		b = uint64(data[i])
+		i++
+		v |= (b & 0x7f) << 28
+		if b < 0x80 {
+			goto decoded
+		}
+		for shift := uint(35); ; shift += 7 {
 			if i >= len(data) {
 				m.fail(errTruncated)
 				return dst
@@ -260,8 +302,8 @@ func (m *msg) repeatedDeltaSint64(dst []int64) []int64 {
 			if b < 0x80 {
 				break
 			}
-			shift += 7
 		}
+	decoded:
 		prev += int64(v>>1) ^ -int64(v&1)
 		dst = append(dst, prev)
 	}
