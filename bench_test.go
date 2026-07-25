@@ -344,6 +344,34 @@ func BenchmarkDecodeDenseNodes(b *testing.B) {
 	}
 }
 
+// A7b: the same hot path with the one- through five-byte delta distribution
+// that dominates real planet data. This keeps the continuation path visible;
+// A7 deliberately isolates the single-byte fast path.
+func BenchmarkDecodeDenseNodesMultiByteDeltas(b *testing.B) {
+	pattern := [...]int64{1, 64, 1 << 13, 1 << 20, 1 << 27}
+	ids := make([]int64, 1000)
+	lats := make([]int64, 1000)
+	lons := make([]int64, 1000)
+	for i := range ids {
+		ids[i] = pattern[i%len(pattern)]
+		lats[i] = pattern[(i+1)%len(pattern)]
+		lons[i] = pattern[(i+2)%len(pattern)]
+	}
+	group := denseGroupBytes(ids, lats, lons, nil, nil)
+	var buf osmbr.DenseNodesBuf
+	if err := osmbr.DecodeDenseNodes(group, &buf, nil); err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	b.SetBytes(int64(len(group)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := osmbr.DecodeDenseNodes(group, &buf, nil); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 // A8: DecodeDenseNodes with DenseInfo — measures the metadata cost.
 func BenchmarkDecodeDenseNodesWithInfo(b *testing.B) {
 	group := buildDenseNodesGroup(1000, true)
