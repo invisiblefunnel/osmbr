@@ -70,6 +70,7 @@ func (br *BlockReader) Reset(r io.Reader) {
 
 // Next reads the next FileBlock into br's own storage, which Blob then
 // returns. It reports false on EOF or error; call Err to distinguish them.
+// Errors are sticky, so a loop may check Err once after it ends.
 //
 // Use NextInto instead when the blob must outlive the next read, such as when
 // handing blocks to worker goroutines.
@@ -92,11 +93,23 @@ func (br *BlockReader) Blob() []byte { return br.blobBuf }
 // It reports false on EOF or error, returning dst[:0] so a caller that pools
 // buffers never loses one. Call Err to distinguish EOF from an error. After a
 // successful call, Type and Offset describe the current block.
+//
+// Errors are sticky. A failure leaves the underlying reader positioned
+// mid-block, where the next four bytes are payload rather than a length
+// prefix, so reading on would decode garbage as blocks; once a call fails,
+// every later one reports false until Reset.
 func (br *BlockReader) NextInto(dst []byte) ([]byte, bool) {
+	if br.err != nil {
+		return dst[:0], false
+	}
 	br.offset = br.pos
 
+	// io.ReadFull reports io.EOF only when it read nothing at all, which is the
+	// one place a file may legitimately end. A partial length prefix means the
+	// file was truncated mid-block and is reported like any other truncation,
+	// so a torn download cannot pass for a complete file.
 	_, err := io.ReadFull(br.r, br.lenBuf[:])
-	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+	if errors.Is(err, io.EOF) {
 		return dst[:0], false
 	}
 	if err != nil {
@@ -194,7 +207,8 @@ func (br *BlockReader) decodeBlobHeader(header []byte) (int, error) {
 	return int(dataSize), nil
 }
 
-// Err returns the first non-EOF error encountered.
+// Err returns the first non-EOF error encountered, which is also the only one:
+// reading stops at the first failure. Reset clears it.
 func (br *BlockReader) Err() error { return br.err }
 
 // Offset returns the byte offset where the current block starts in the
