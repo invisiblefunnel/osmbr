@@ -30,14 +30,18 @@ type InfoBuf struct {
 // that field — including when the group carries no DenseInfo at all, which
 // clears anything a previous group left behind.
 //
-// Delta-decoded fields: Timestamps, Changesets, UIDs.
-// Non-delta fields: Versions, UserSIDs.
+// Delta-decoded fields: Timestamps, Changesets, UIDs, UserSIDs.
+// Non-delta fields: Versions.
+//
+// Note UserSIDs is delta-coded here while the single-entity InfoBuf.UserSID is
+// not: the PBF schema declares DenseInfo.user_sid as a delta-coded sint32 and
+// Info.user_sid as a plain uint32.
 type DenseInfoBuf struct {
 	Versions   []int32
-	Timestamps []int64  // delta-decoded; milliseconds since Unix epoch
-	Changesets []int64  // delta-decoded
-	UIDs       []int32  // delta-decoded
-	UserSIDs   []uint32 // indices into the block's string table
+	Timestamps []int64 // delta-decoded; milliseconds since Unix epoch
+	Changesets []int64 // delta-decoded
+	UIDs       []int32 // delta-decoded
+	UserSIDs   []int32 // delta-decoded; indices into the block's string table
 	Visibles   []bool
 }
 
@@ -98,7 +102,7 @@ func (info *DenseInfoBuf) reset() {
 
 // decodeDenseInfo decodes a serialized DenseInfo message into info, appending
 // to arrays that DecodeDenseNodes has already reset. Delta-decodes Timestamps,
-// Changesets, UIDs.
+// Changesets, UIDs, UserSIDs.
 func decodeDenseInfo(data []byte, info *DenseInfoBuf) error {
 	var m msg
 	m.reset(data)
@@ -112,8 +116,8 @@ func decodeDenseInfo(data []byte, info *DenseInfoBuf) error {
 			info.Changesets = m.repeatedDeltaSint64(info.Changesets)
 		case 4: // uid (packed sint32, delta)
 			info.UIDs = m.repeatedDeltaSint32(info.UIDs)
-		case 5: // user_sid (packed uint32, NOT delta)
-			info.UserSIDs = m.repeatedUint32(info.UserSIDs)
+		case 5: // user_sid (packed sint32, delta)
+			info.UserSIDs = m.repeatedDeltaSint32(info.UserSIDs)
 		case 6: // visible (packed bool)
 			info.Visibles = m.repeatedBool(info.Visibles)
 		default:

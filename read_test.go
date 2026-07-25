@@ -793,3 +793,72 @@ func TestReadFileChecksum(t *testing.T) {
 		t.Errorf("SkipChecksum changed the decode:\n got %+v\nwant %+v", got, want)
 	}
 }
+
+// TestReadFileDenseUserSIDs guards the delta decoding of DenseInfo.user_sid
+// against the real extract, which no synthetic fixture reproduces as
+// convincingly: read as a plain (non-delta) uint32, the field yields the seed
+// value on the first node of every group and 0 on all the rest, so the
+// per-group first node resolves to a block-dependent tag key — or, where the
+// block's string table is shorter than the seed value, to no string at all.
+//
+// The bundled extract is anonymized, so every node carries the same empty
+// username. That makes "all nodes resolve to one string" a sharp check: under
+// the non-delta reading the first node of each of the file's 57 dense groups
+// disagrees with the other 453,703 nodes, tripping the range check in the
+// blocks with too-short string tables and the distinct-username count
+// everywhere else.
+func TestReadFileDenseUserSIDs(t *testing.T) {
+	f := openTestPBF(t)
+
+	var (
+		pb    osmbr.PrimitiveBlock
+		dnBuf osmbr.DenseNodesBuf
+		diBuf osmbr.DenseInfoBuf
+		dec   osmbr.Decompressor
+
+		seen  = map[string]int{}
+		nodes int
+	)
+	br := osmbr.NewBlockReader(f)
+	for br.Next() {
+		if br.Type() != "OSMData" {
+			continue
+		}
+		data, err := dec.Decompress(br.Blob())
+		if err != nil {
+			t.Fatalf("Decompress: %v", err)
+		}
+		if err := pb.DecodeFrom(data); err != nil {
+			t.Fatalf("DecodeFrom: %v", err)
+		}
+		gs := pb.Groups()
+		for gs.Next() {
+			if gs.Type() != osmbr.GroupTypeDense {
+				continue
+			}
+			if err := gs.DecodeDenseNodes(&dnBuf, &diBuf); err != nil {
+				t.Fatalf("DecodeDenseNodes: %v", err)
+			}
+			for _, sid := range diBuf.UserSIDs {
+				if sid < 0 || int(sid) >= pb.NumStrings() {
+					t.Fatalf("user_sid %d out of range for %d strings", sid, pb.NumStrings())
+				}
+				seen[string(pb.String(int(sid)))]++
+				nodes++
+			}
+		}
+		if err := gs.Err(); err != nil {
+			t.Fatalf("Groups: %v", err)
+		}
+	}
+	if err := br.Err(); err != nil {
+		t.Fatalf("BlockReader: %v", err)
+	}
+
+	if nodes == 0 {
+		t.Fatal("fixture carried no DenseInfo.user_sid values, nothing tested")
+	}
+	if len(seen) != 1 {
+		t.Errorf("anonymized fixture resolved %d distinct usernames, want 1: %v", len(seen), seen)
+	}
+}
