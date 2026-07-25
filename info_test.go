@@ -178,19 +178,20 @@ func TestInfoSkipWhenInfoArgNil(t *testing.T) {
 }
 
 func TestDenseInfoBufDeltaDecode(t *testing.T) {
-	// Three nodes with non-delta versions/user_sids and delta timestamps/changesets/uids.
+	// Three nodes with non-delta versions and delta
+	// timestamps/changesets/uids/user_sids.
 	versions := []int32{1, 2, 3}
 	timestamps := []int64{100, 10, 20} // → 100, 110, 130
 	changesets := []int64{50, 5, 5}    // → 50, 55, 60
 	uids := []int32{10, 1, 2}          // → 10, 11, 13
-	userSIDs := []uint32{4, 5, 6}
+	userSIDs := []int32{4, 1, -2}      // → 4, 5, 3
 	visibles := []bool{true, false, true}
 
 	diBody := pbPackedInt32(1, versions)
 	diBody = append(diBody, pbPackedSint64(2, timestamps)...)
 	diBody = append(diBody, pbPackedSint64(3, changesets)...)
 	diBody = append(diBody, pbPackedSint32(4, uids)...)
-	diBody = append(diBody, pbPackedUint32(5, userSIDs)...)
+	diBody = append(diBody, pbPackedSint32(5, userSIDs)...)
 	diBody = append(diBody, pbPackedBool(6, visibles)...)
 
 	// Three nodes with zero coordinates so the DenseNodesBuf length matches.
@@ -216,8 +217,8 @@ func TestDenseInfoBufDeltaDecode(t *testing.T) {
 	if !slices.Equal(info.UIDs, []int32{10, 11, 13}) {
 		t.Errorf("UIDs = %v, want delta-decoded", info.UIDs)
 	}
-	if !slices.Equal(info.UserSIDs, userSIDs) {
-		t.Errorf("UserSIDs = %v, want %v", info.UserSIDs, userSIDs)
+	if !slices.Equal(info.UserSIDs, []int32{4, 5, 3}) {
+		t.Errorf("UserSIDs = %v, want delta-decoded", info.UserSIDs)
 	}
 	if !slices.Equal(info.Visibles, visibles) {
 		t.Errorf("Visibles = %v, want %v", info.Visibles, visibles)
@@ -232,6 +233,8 @@ func TestDenseInfoBufDeltaDecodeMixedPackedAndUnpacked(t *testing.T) {
 	diBody = append(diBody, pbSint64Field(3, 5)...)
 	diBody = append(diBody, pbPackedSint32(4, []int32{10, 1})...)
 	diBody = append(diBody, pbSint32Field(4, 2)...)
+	diBody = append(diBody, pbPackedSint32(5, []int32{4, 1})...)
+	diBody = append(diBody, pbSint32Field(5, -2)...)
 
 	group := denseGroupBytes([]int64{1, 0, 0}, []int64{0, 0, 0}, []int64{0, 0, 0}, nil, diBody)
 
@@ -250,5 +253,8 @@ func TestDenseInfoBufDeltaDecodeMixedPackedAndUnpacked(t *testing.T) {
 	}
 	if !slices.Equal(info.UIDs, []int32{10, 11, 13}) {
 		t.Errorf("UIDs = %v, want mixed-field delta decode", info.UIDs)
+	}
+	if !slices.Equal(info.UserSIDs, []int32{4, 5, 3}) {
+		t.Errorf("UserSIDs = %v, want mixed-field delta decode", info.UserSIDs)
 	}
 }

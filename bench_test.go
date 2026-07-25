@@ -87,7 +87,7 @@ func buildDenseNodesGroup(n int, withInfo bool) []byte {
 		timestamps := make([]int64, n)
 		changesets := make([]int64, n)
 		uids := make([]int32, n)
-		userSIDs := make([]uint32, n)
+		userSIDs := make([]int32, n)
 		for i := 0; i < n; i++ {
 			versions[i] = 1
 			timestamps[i] = 1
@@ -99,7 +99,7 @@ func buildDenseNodesGroup(n int, withInfo bool) []byte {
 		info = append(info, pbPackedSint64(2, timestamps)...)
 		info = append(info, pbPackedSint64(3, changesets)...)
 		info = append(info, pbPackedSint32(4, uids)...)
-		info = append(info, pbPackedUint32(5, userSIDs)...)
+		info = append(info, pbPackedSint32(5, userSIDs)...)
 	}
 	return denseGroupBytes(ids, lats, lons, nil, info)
 }

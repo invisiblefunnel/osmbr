@@ -199,7 +199,7 @@ Iterates over `PrimitiveGroup` messages within a block. Call `Type()` to check t
 | `RelationBuf` | `Keys`, `Vals`, `RolesSID`, `MemIDs`, `Types` | `MemIDs` absolute (delta-decoded) |
 | `NodeBuf` | `Keys`, `Vals` | Individual nodes (rare in practice) |
 | `InfoBuf` | `Version`, `Timestamp`, `Changeset`, `UID`, `UserSID`, `Visible` | Per-entity metadata |
-| `DenseInfoBuf` | `Versions`, `Timestamps`, `Changesets`, `UIDs`, `UserSIDs`, `Visibles` | Per-node metadata arrays |
+| `DenseInfoBuf` | `Versions`, `Timestamps`, `Changesets`, `UIDs`, `UserSIDs`, `Visibles` | Per-node metadata arrays; `Timestamps`/`Changesets`/`UIDs`/`UserSIDs` absolute (delta-decoded) |
 
 Pass `nil` for the info parameter to skip metadata decoding.
 
@@ -275,6 +275,8 @@ for i, id := range dnBuf.IDs {
     fmt.Printf("node %d: v%d ts=%d\n", id, diBuf.Versions[i], ts)
 }
 ```
+
+`DenseInfoBuf.UserSIDs` is delta-decoded, while the single-entity `InfoBuf.UserSID` is not — the PBF schema declares `DenseInfo.user_sid` as a delta-coded `sint32` and `Info.user_sid` as a plain `uint32`. Both index the block's string table; only the dense one needs unwinding, and osmbr does it for you.
 
 `DecodeDenseNodes` guarantees each `DenseInfoBuf` array is either empty or exactly as long as `IDs`, rejecting files that disagree, so a non-empty array indexes by node position without a bounds check of its own. An array is empty when the file omits that field — `Visibles` outside full-history extracts, or all of them for a file stripped of metadata — so check `len()` once before the loop rather than per node.
 
