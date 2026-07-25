@@ -4,7 +4,7 @@ A low-level Go library for reading OpenStreetMap [PBF files](https://wiki.openst
 
 ## Design
 
-- **Caller-managed buffers** — Allocate buffer structs once and reuse them across blocks. After warm-up, the hot path makes zero heap allocations.
+- **Caller-managed buffers** — Allocate buffer structs once and reuse them across blocks. After warm-up, reading a whole file makes zero heap allocations.
 - **Scanner-style APIs** — Sequential reads with sticky errors checked after iteration.
 - **Raw values** — Returns raw integers for coordinates and string-table indices for tags. The caller applies granularity/offset conversion.
 - **No domain types** — There are no `Node`, `Way`, or `Relation` structs. The caller reads fields from buffer structs and builds whatever representation it needs.
@@ -158,7 +158,19 @@ See `examples/count` for the full producer/worker pattern.
 
 ### Decompressor
 
-`Decompress(blob []byte)` parses and decompresses a raw Blob message, returning the decompressed payload. Allocate one per goroutine and reuse across blocks. Uses [klauspost/compress](https://github.com/klauspost/compress) for zlib decompression with reusable decompressor state.
+`Decompress(blob []byte)` parses and decompresses a raw Blob message, returning the decompressed payload. Allocate one per goroutine and reuse across blocks. The returned slice points into the `Decompressor`'s own storage and is valid until the next `Decompress` call — including for uncompressed (`raw`) blobs, which are copied rather than aliased so that advancing the `BlockReader` can never rewrite a payload you still hold.
+
+osmbr reads the zlib wrapper itself and drives [klauspost/compress](https://github.com/klauspost/compress)'s DEFLATE reader directly, reusing its state across blocks.
+
+Every zlib blob's Adler-32 trailer is **verified by default**, which costs about 14% of decompression time (~10% of a whole-file read). Inflating rejects most corruption on its own and `Decompress` independently requires the output to end exactly at `Blob.raw_size`, but neither covers a stored (uncompressed) DEFLATE block: a flipped bit there changes neither the stream's structure nor its length, so the checksum is the only thing that catches it. Skip the check only for input whose integrity is already assured:
+
+```go
+dec := osmbr.Decompressor{SkipChecksum: true}
+```
+
+Note the `raw_size` length check applies only when `Blob.raw_size` is present. Without it, output is bounded by the 32 MiB blob limit and nothing else.
+
+Only `raw` and `zlib_data` blobs are supported; lzma, bzip2, lz4, and zstd blobs return an error.
 
 ### PrimitiveBlock
 
@@ -260,6 +272,25 @@ for i, id := range dnBuf.IDs {
     fmt.Printf("node %d: v%d ts=%d\n", id, diBuf.Versions[i], ts)
 }
 ```
+
+## Performance
+
+Measured on the bundled 3.1 MB extract (Go 1.26, arm64), reading every block through decompression and full entity decode, with Adler-32 verification at its default setting:
+
+| | time/op | allocs/op |
+|---|---|---|
+| Whole file, no metadata | ~23 ms | 0 |
+| Whole file, with metadata | ~25 ms | 0 |
+
+Timings drift a few percent between runs on the same machine, so treat them as a scale rather than a target; the allocation counts are exact.
+
+Decompression accounts for roughly 79% of the total, and the rest is protobuf decode. Checksum verification is about 14% of the decompression figure, so `SkipChecksum: true` takes a whole-file read down to roughly 21 ms / 23 ms. Reproduce with:
+
+```
+go test -bench=. -benchmem -run=^$ .
+```
+
+The benchmark suite has two tiers: micro-benchmarks over synthetic inputs that isolate each hot path, and end-to-end benchmarks over the bundled extract. Use [benchstat](https://pkg.go.dev/golang.org/x/perf/cmd/benchstat) to compare runs.
 
 ## Non-goals
 

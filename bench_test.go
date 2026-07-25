@@ -266,7 +266,26 @@ func BenchmarkDecompressorZlib(b *testing.B) {
 	}
 }
 
-// A4: Decompressor zlib path without raw_size (io.ReadAll branch).
+// A3b: Decompressor zlib path with Adler-32 verification skipped, so the cost
+// the default check pays for is visible next to A3.
+func BenchmarkDecompressorZlibSkipChecksum(b *testing.B) {
+	payload := bytes.Repeat([]byte("osmbr-bench-payload-"), 256) // ~5 KiB
+	blob := zlibBlob(len(payload), zlibCompress(b, payload))
+	dec := osmbr.Decompressor{SkipChecksum: true}
+	if _, err := dec.Decompress(blob); err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	b.SetBytes(int64(len(payload)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := dec.Decompress(blob); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+// A4: Decompressor zlib path without raw_size (read-until-EOF branch).
 func BenchmarkDecompressorZlibNoRawSize(b *testing.B) {
 	payload := bytes.Repeat([]byte("osmbr-bench-payload-"), 256)
 	blob := zlibBlob(-1, zlibCompress(b, payload))
@@ -544,6 +563,9 @@ func BenchmarkRelationScanner(b *testing.B) {
 // Mirrors a consumer that allocates the blob buffer once and walks many
 // files with fresh BlockReaders (cf. ReadAllBlocksReset which also reuses
 // the BlockReader via Reset).
+//
+// A fresh reader is one small allocation; the BlobHeader scratch is inline
+// in the struct, so nothing else is allocated per file.
 func BenchmarkReadAllBlocks(b *testing.B) {
 	sets := loadTestPBFSets(b)
 	rdr := bytes.NewReader(sets.file)
@@ -783,6 +805,32 @@ func BenchmarkDecompressAllBlobs(b *testing.B) {
 	}
 }
 
+// B2b: the same blobs with Adler-32 verification skipped, so the real-file
+// cost the default check pays for is visible next to B2.
+func BenchmarkDecompressAllBlobsSkipChecksum(b *testing.B) {
+	sets := loadTestPBFSets(b)
+	var total int64
+	for _, blob := range sets.dataBlobs {
+		total += int64(len(blob))
+	}
+	dec := osmbr.Decompressor{SkipChecksum: true}
+	for _, blob := range sets.dataBlobs {
+		if _, err := dec.Decompress(blob); err != nil {
+			b.Fatal(err)
+		}
+	}
+	b.ReportAllocs()
+	b.SetBytes(total)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		for _, blob := range sets.dataBlobs {
+			if _, err := dec.Decompress(blob); err != nil {
+				b.Fatal(err)
+			}
+		}
+	}
+}
+
 // B3: PrimitiveBlock.DecodeFrom over preloaded decompressed bytes.
 func BenchmarkDecodeAllPrimitiveBlocks(b *testing.B) {
 	sets := loadTestPBFSets(b)
@@ -839,8 +887,8 @@ func BenchmarkIterateAllGroups(b *testing.B) {
 // callers typically pass an already-allocated *os.File, so counting a
 // reader alloc per file-read would misrepresent real-world cost.
 type fullPipelineBufs struct {
-	rdr   *bytes.Reader
-	blob  []byte
+	rdr   bytes.Reader
+	br    osmbr.BlockReader
 	dec   osmbr.Decompressor
 	pb    osmbr.PrimitiveBlock
 	dnBuf osmbr.DenseNodesBuf
@@ -891,23 +939,14 @@ func runFullPipeline(b *testing.B, file []byte, bufs *fullPipelineBufs, withInfo
 		ip = &bufs.iBuf
 		diPtr = &bufs.diBuf
 	}
-	if bufs.rdr == nil {
-		bufs.rdr = bytes.NewReader(file)
-	} else {
-		bufs.rdr.Reset(file)
-	}
-	br := osmbr.NewBlockReader(bufs.rdr)
-	for {
-		var ok bool
-		blob, ok := br.NextInto(bufs.blob[:0])
-		if !ok {
-			break
-		}
-		bufs.blob = blob
+	bufs.rdr.Reset(file)
+	br := &bufs.br
+	br.Reset(&bufs.rdr)
+	for br.Next() {
 		if br.Type() != "OSMData" {
 			continue
 		}
-		data, err := bufs.dec.Decompress(bufs.blob)
+		data, err := bufs.dec.Decompress(br.Blob())
 		if err != nil {
 			b.Fatal(err)
 		}
