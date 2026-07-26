@@ -381,6 +381,9 @@ func FuzzDecodeHeader(f *testing.F) {
 			pbSint64Field(3, 18000000000), pbSint64Field(4, 17000000000))))
 	f.Add(concat(pbVarintField(32, 1700000000), pbVarintField(33, 42),
 		pbLenDelim(34, []byte("https://example.org/"))))
+	// Two bbox submessages, where merge and replace semantics differ.
+	f.Add(concat(pbLenDelim(1, pbSint64Field(1, 5)), pbLenDelim(1, pbSint64Field(2, 7))))
+
 	seeds := loadSeeds(f)
 	addSeeds(f, seeds.headerBlock)
 
@@ -466,6 +469,13 @@ func FuzzDecodeDenseNodes(f *testing.F) {
 		pbPackedSint64(1, []int64{1}), pbPackedSint64(8, []int64{1}),
 		pbPackedSint64(9, []int64{1}),
 		pbLenDelim(5, pbLenDelim(5, []byte{0x80, 0x80, 0x80, 0x80, 0x10})))))
+	// Two dense submessages, where merge and first-wins semantics differ.
+	f.Add(concat(
+		pbLenDelim(2, concat(pbPackedSint64(1, []int64{1}),
+			pbPackedSint64(8, []int64{1}), pbPackedSint64(9, []int64{1}))),
+		pbLenDelim(2, concat(pbPackedSint64(1, []int64{1}),
+			pbPackedSint64(8, []int64{1}), pbPackedSint64(9, []int64{1})))))
+
 	seeds := loadSeeds(f)
 	addSeeds(f, seeds.denseGroup)
 
