@@ -1,0 +1,79 @@
+name: fuzz
+
+# A longer fuzz run than a pull request can afford, once a week.
+#
+# Every target is a differential test against the reference decoder in
+# reference_test.go, so a failure here usually means the two disagree on a value
+# rather than that something panicked. The corpus a run builds up is cached, so
+# consecutive weeks pick up where the last left off instead of rediscovering the
+# same coverage; a crasher is uploaded as an artifact and should be committed to
+# testdata/fuzz/ as a seed.
+
+on:
+  schedule:
+    # 05:00 UTC on Mondays.
+    - cron: "0 5 * * 1"
+  workflow_dispatch:
+    inputs:
+      fuzztime:
+        description: "Fuzzing time per target (Go duration)"
+        required: false
+        default: "20m"
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    # One job per target rather than a loop, so the targets run in parallel and
+    # one failure does not cut the others short.
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - FuzzBlockReader
+          - FuzzDecompressor
+          - FuzzDecodeHeader
+          - FuzzPrimitiveBlock
+          - FuzzGroupScanner
+          - FuzzDecodeDenseNodes
+          - FuzzDenseInfo
+          - FuzzInfo
+          - FuzzNodeScanner
+          - FuzzWayScanner
+          - FuzzRelationScanner
+          - FuzzPBFFile
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.24"
+
+      # Inputs the fuzzer finds interesting live in the build cache, not in the
+      # repository. Restoring it carries a target's corpus from one week to the
+      # next; the key changes every run so the cache is always rewritten, and
+      # restore-keys falls back to the most recent run for this target.
+      - name: Restore fuzz corpus
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/go-build/fuzz
+          key: fuzz-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: |
+            fuzz-${{ matrix.target }}-
+
+      - name: Fuzz ${{ matrix.target }}
+        run: |
+          go test -run '^${{ matrix.target }}$' -fuzz '^${{ matrix.target }}$' \
+            -fuzztime='${{ inputs.fuzztime || '20m' }}' .
+
+      # A crasher is written into testdata/fuzz/<target>/ in the working tree.
+      # It is uploaded rather than committed: it needs a look and a root cause
+      # before it becomes a seed.
+      - name: Upload crashers
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crashers-${{ matrix.target }}
+          path: testdata/fuzz/
+          if-no-files-found: ignore
