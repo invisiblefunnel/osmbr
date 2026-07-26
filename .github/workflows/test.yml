@@ -14,3 +14,38 @@ jobs:
           go-version: "1.24"
       - run: go vet ./...
       - run: go test ./...
+
+  # The seed corpora are the regression suite for every bug fuzzing has found:
+  # each testdata/fuzz entry is an input that once decoded wrongly. `go test`
+  # already replays them as part of the job above, so this one adds the checks
+  # that job does not: the race detector over the concurrent decode paths, and a
+  # short fuzz run per target to catch a regression that the recorded inputs no
+  # longer reach.
+  fuzz-seeds:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.24"
+      - name: Seed corpus under the race detector
+        run: go test -race -run 'Fuzz|TestDiffOracle' ./...
+      - name: Short fuzz run per target
+        run: |
+          set -euo pipefail
+          # Each target gets a fresh 20 seconds. This is not long enough to
+          # explore anything new; it is long enough that a decoder broken badly
+          # enough to fail on almost any input fails here rather than in the
+          # weekly run.
+          for target in $(go test -list 'Fuzz.*' . | grep '^Fuzz'); do
+            echo "::group::$target"
+            go test -run "^${target}$" -fuzz "^${target}$" -fuzztime=20s .
+            echo "::endgroup::"
+          done
+      - name: Upload any newly found crashers
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crashers-pr
+          path: testdata/fuzz/
+          if-no-files-found: ignore
