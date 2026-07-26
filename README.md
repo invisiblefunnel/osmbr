@@ -282,6 +282,25 @@ for i, id := range dnBuf.IDs {
 
 Both buffers are cleared at the start of every call, so one of each can be reused for a whole file. Metadata is optional per entity and per group: an entity with no `Info` reads back as the zero `InfoBuf`, and a group with no `DenseInfo` leaves every `DenseInfoBuf` array empty, rather than either one retaining what the previous entity or group left behind.
 
+## Correctness
+
+The decoders here are written for speed: unrolled varint loops, fused delta accumulation, buffers reused across blocks, zlib driven through `flate` rather than `compress/zlib`. None of that is safe to check against tests that assert what the same code produced, so it is checked against a second decoder instead.
+
+`reference_test.go` is a complete PBF decoder written for obviousness — one value per loop iteration, no unrolling, no buffer reuse, `compress/zlib` for inflation, allocating freely. Where it is deliberately strict or deliberately lax, the rule is stated where it is applied and attributed to the protobuf spec, the PBF format, or a documented osmbr choice. Its scalar conversions and varint limits are pinned to `google.golang.org/protobuf`'s by table tests, so the oracle cannot quietly drift into agreeing with a bug.
+
+`differential_test.go` requires the two to agree on every entry point, in two senses: **identical error behaviour**, meaning both accept an input or both reject it, and **identical output**, meaning every decoded value matches exactly when both accept. Values are compared only when both accept, since a decoder that reports an error is free to leave anything in the caller's buffers.
+
+Beyond value comparison, the oracle pins the invariants that only hold across calls: `Next`, `NextInto`, and `Reset` agree with each other and with a reader that returns one byte at a time; a `Decompressor` survives every blob, valid or not, and decodes the same bytes on reuse; `SkipChecksum` never rejects a blob the default accepts; and a whole file read the documented way — one `BlockReader` recycling one buffer, feeding one `Decompressor` — matches a fresh decoder per block. That last one is the only check that spans blocks, which is where a buffer handed out with the wrong lifetime would show.
+
+`fuzz_test.go` has a native fuzz target per entry point plus one end-to-end over whole files, each wired to the oracle. Seeds combine synthetic messages that reach specific branches with the first few entities of the bundled extract re-encoded compactly. Inputs that once decoded wrongly live in `testdata/fuzz/` and are replayed by plain `go test`; `TestDiffOracleOnRealFile` checks the whole extract, uncapped, on every run.
+
+```
+go test ./...                                   # includes the seed corpus and the real-file oracle
+go test -run '^FuzzPBFFile$' -fuzz '^FuzzPBFFile$' -fuzztime=5m .
+```
+
+The fuzz targets bound their own cost — an input size cap, and limits on repeated and total inflation — because an oracle slow enough to stall a fuzzing worker reports nothing at all. Each bound says at its definition what it gives up. A pull request runs the seed corpus under the race detector plus a short fuzz run per target; a scheduled weekly job fuzzes each target for longer in its own job and uploads anything it finds.
+
 ## Performance
 
 Measured on the bundled 3.1 MB extract (Go 1.26, arm64), reading every block through decompression and full entity decode, with Adler-32 verification at its default setting:
