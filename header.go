@@ -47,11 +47,9 @@ func DecodeHeader(data []byte) (Header, error) {
 			if m.err != nil {
 				return h, fmt.Errorf("osmbr: Header.bbox: %w", m.err)
 			}
-			bb, err := decodeHeaderBBox(bboxData)
-			if err != nil {
+			if err := decodeHeaderBBox(bboxData, &h.BBox); err != nil {
 				return h, err
 			}
-			h.BBox = bb
 		case 4: // required_features
 			b := m.bytes()
 			if m.err != nil {
@@ -98,8 +96,13 @@ func DecodeHeader(data []byte) (Header, error) {
 	return h, nil
 }
 
-func decodeHeaderBBox(data []byte) (HeaderBBox, error) {
-	var bb HeaderBBox
+// decodeHeaderBBox decodes a HeaderBBox message into bb without clearing it
+// first. bbox is a singular message field, and protobuf merges a singular
+// message field that appears more than once rather than replacing it: a
+// coordinate set by the first occurrence survives unless a later one sets it
+// too. DecodeHeader passes the zero value, so the ordinary single-bbox case is
+// unaffected.
+func decodeHeaderBBox(data []byte, bb *HeaderBBox) error {
 	var m msg
 	m.reset(data)
 	for m.next() {
@@ -117,7 +120,7 @@ func decodeHeaderBBox(data []byte) (HeaderBBox, error) {
 		}
 	}
 	if m.err != nil {
-		return bb, fmt.Errorf("osmbr: HeaderBBox: %w", m.err)
+		return fmt.Errorf("osmbr: HeaderBBox: %w", m.err)
 	}
-	return bb, nil
+	return nil
 }

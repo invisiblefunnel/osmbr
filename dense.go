@@ -101,7 +101,13 @@ func DecodeDenseNodes(groupData []byte, buf *DenseNodesBuf, info *DenseInfoBuf) 
 		if dnMsg.err != nil {
 			return fmt.Errorf("osmbr: DenseNodes: %w", dnMsg.err)
 		}
-		break // only one DenseNodes per PrimitiveGroup
+		// A group carries at most one DenseNodes, but the scan continues rather
+		// than stopping here. Stopping would leave the rest of the group
+		// unvalidated, so a file damaged past this point would decode as
+		// though it were intact; and protobuf merges a singular message field
+		// that appears more than once, which for these arrays means appending
+		// with the delta totals carried across — which is what the repeated
+		// decoders already do for a field split over several wire entries.
 	}
 	if pgMsg.err != nil {
 		return fmt.Errorf("osmbr: PrimitiveGroup: %w", pgMsg.err)
