@@ -1,6 +1,9 @@
 package osmbr
 
-import "errors"
+import (
+	"errors"
+	"math"
+)
 
 // Protobuf wire types.
 // https://protobuf.dev/programming-guides/encoding/
@@ -205,6 +208,20 @@ func unzig64(v uint64) int64 {
 	return int64(v>>1) ^ -int64(v&1)
 }
 
+// unzig32 reverses protobuf's zigzag encoding for a sint32 field.
+//
+// The varint is masked to 32 bits before it is decoded, not truncated after: a
+// sint32's sign comes from bit 31 of the encoded value. Decoding all 64 bits
+// first and converting to int32 afterwards takes the sign from bit 63 instead
+// and lets bit 32 land on the result's sign bit, so the two disagree on any
+// varint with bit 32 set — 0x100000000, the shortest of them, decodes to 0 here
+// and to -2147483648 the other way. Every value a sint32 can legitimately
+// encode fits in 32 bits and both agree on all of them.
+func unzig32(v uint64) int32 {
+	v &= math.MaxUint32
+	return int32(v>>1) ^ -int32(v&1)
+}
+
 // The repeated* decoders below all accept both the packed and the unpacked
 // encoding of a repeated scalar field, and all repeat the same varint loop
 // instead of sharing a generic one.
@@ -317,13 +334,15 @@ func (m *msg) repeatedDeltaSint32(dst []int32) []int32 {
 		prev = dst[len(dst)-1]
 	}
 	if m.typ == wireVarint {
-		return append(dst, prev+int32(unzig64(m.rawVarint())))
+		return append(dst, prev+unzig32(m.rawVarint()))
 	}
 	data := m.bytes()
 	for i := 0; i < len(data); {
 		b := uint64(data[i])
 		i++
 		if b < 0x80 {
+			// A one-byte varint has nothing above bit 6, so unzig32's mask
+			// would be a no-op here and the decode is inlined without it.
 			prev += int32(b>>1) ^ -int32(b&1)
 			dst = append(dst, prev)
 			continue
@@ -347,7 +366,7 @@ func (m *msg) repeatedDeltaSint32(dst []int32) []int32 {
 			}
 			shift += 7
 		}
-		prev += int32(unzig64(v))
+		prev += unzig32(v)
 		dst = append(dst, prev)
 	}
 	return dst

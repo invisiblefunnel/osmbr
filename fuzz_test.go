@@ -461,6 +461,11 @@ func FuzzDecodeDenseNodes(f *testing.F) {
 		pbSint64Field(1, 5), pbSint64Field(1, 5),
 		pbSint64Field(8, 1), pbSint64Field(8, 1),
 		pbPackedSint64(9, []int64{1}), pbPackedSint64(9, []int64{1}))))
+	// A sint32 delta carrying bit 32, where masking and truncating differ.
+	f.Add(pbLenDelim(2, concat(
+		pbPackedSint64(1, []int64{1}), pbPackedSint64(8, []int64{1}),
+		pbPackedSint64(9, []int64{1}),
+		pbLenDelim(5, pbLenDelim(5, []byte{0x80, 0x80, 0x80, 0x80, 0x10})))))
 	seeds := loadSeeds(f)
 	addSeeds(f, seeds.denseGroup)
 
@@ -675,6 +680,10 @@ func FuzzDenseInfo(f *testing.F) {
 	f.Add(concat(pbPackedInt32(1, []int32{1}), pbPackedSint64(2, []int64{1}),
 		pbPackedSint64(3, []int64{1}), pbPackedSint32(4, []int32{1}),
 		pbPackedSint32(5, []int32{1}), pbPackedBool(6, []bool{true})))
+	// uid and user_sid deltas carrying bit 32, where masking and truncating
+	// after a 64-bit zigzag decode disagree.
+	f.Add(pbLenDelim(4, []byte{0x80, 0x80, 0x80, 0x80, 0x10}))
+	f.Add(pbLenDelim(5, []byte{0x80, 0x80, 0x80, 0x80, 0x10}))
 	// A user_sid split across two entries, so the delta has to carry over.
 	f.Add(concat(pbPackedSint32(5, []int32{3}), pbPackedSint32(5, []int32{4})))
 
