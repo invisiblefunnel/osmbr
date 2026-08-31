@@ -45,8 +45,8 @@ jobs:
           - FuzzRelationScanner
           - FuzzPBFFile
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: "1.24"
 
@@ -55,7 +55,7 @@ jobs:
       # next; the key changes every run so the cache is always rewritten, and
       # restore-keys falls back to the most recent run for this target.
       - name: Restore fuzz corpus
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/go-build/fuzz
           key: fuzz-${{ matrix.target }}-${{ github.run_id }}
@@ -72,7 +72,7 @@ jobs:
       # before it becomes a seed.
       - name: Upload crashers
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: fuzz-crashers-${{ matrix.target }}
           path: testdata/fuzz/
